@@ -1,0 +1,2152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIF Studio Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-tertiary: #18181b;
+            --bg-elevated: #1f1f23;
+            --bg-hover: #27272a;
+            --border-subtle: #27272a;
+            --border-medium: #3f3f46;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --accent-primary: #22d3ee;
+            --accent-secondary: #06b6d4;
+            --accent-glow: rgba(34, 211, 238, 0.15);
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+            --transition-fast: 0.15s ease;
+            --transition-normal: 0.25s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-medium);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Layout */
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--bg-primary);
+        }
+
+        .logo-text {
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-text span {
+            color: var(--accent-primary);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 16px;
+            font-family: var(--font-sans);
+            font-size: 13px;
+            font-weight: 600;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: var(--bg-primary);
+        }
+        .btn-primary:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-medium);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-secondary);
+        }
+        .btn-ghost:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+        .btn-danger:hover {
+            background: var(--danger-hover);
+        }
+
+        .btn-icon {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+        }
+
+        /* Main Content */
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .sidebar-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        /* Tool Panels */
+        .tool-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .input-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        input[type="number"],
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 13px;
+            transition: border-color var(--transition-fast);
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            appearance: none;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            background: var(--accent-primary);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform var(--transition-fast);
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent-primary);
+        }
+
+        /* Canvas Area */
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-primary);
+            overflow: hidden;
+        }
+
+        .canvas-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .tool-btn {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .tool-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .tool-btn.active {
+            background: var(--accent-glow);
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 24px;
+            background: var(--border-subtle);
+            margin: 0 4px;
+        }
+
+        .zoom-display {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            min-width: 50px;
+            text-align: center;
+        }
+
+        .canvas-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: auto;
+            padding: 40px;
+            position: relative;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            background: repeating-conic-gradient(var(--bg-tertiary) 0% 25%, var(--bg-secondary) 0% 50%) 50% / 16px 16px;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-lg);
+            overflow: hidden;
+        }
+
+        #mainCanvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .crop-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: none;
+        }
+
+        .crop-overlay.active {
+            display: block;
+            pointer-events: auto;
+        }
+
+        .crop-box {
+            position: absolute;
+            border: 2px dashed var(--accent-primary);
+            background: rgba(34, 211, 238, 0.1);
+            cursor: move;
+        }
+
+        .crop-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: var(--accent-primary);
+            border-radius: 2px;
+        }
+
+        .crop-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+        .crop-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+        .crop-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+        .crop-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+
+        /* Drop Zone */
+        .drop-zone {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            background: var(--bg-primary);
+            z-index: 50;
+            transition: opacity var(--transition-normal);
+        }
+
+        .drop-zone.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .drop-zone.dragover {
+            background: var(--accent-glow);
+        }
+
+        .drop-icon {
+            width: 80px;
+            height: 80px;
+            border: 2px dashed var(--border-medium);
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            transition: all var(--transition-normal);
+        }
+
+        .drop-zone.dragover .drop-icon {
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+            transform: scale(1.1);
+        }
+
+        .drop-text {
+            text-align: center;
+        }
+
+        .drop-text h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .drop-text p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        /* Timeline */
+        .timeline {
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .timeline-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .timeline-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .timeline-stat {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .timeline-stat span {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .timeline-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .frames-container {
+            display: flex;
+            gap: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            min-height: 120px;
+        }
+
+        .frame-item {
+            flex-shrink: 0;
+            width: 80px;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+        }
+
+        .frame-item:hover {
+            border-color: var(--border-medium);
+        }
+
+        .frame-item.selected {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        .frame-item.dragging {
+            opacity: 0.5;
+        }
+
+        .frame-thumb {
+            width: 100%;
+            height: 60px;
+            object-fit: contain;
+            background: var(--bg-primary);
+        }
+
+        .frame-info {
+            padding: 6px 8px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .frame-number {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .frame-delete {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 18px;
+            height: 18px;
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            border-radius: 50%;
+            color: var(--text-muted);
+            cursor: pointer;
+            opacity: 0;
+            transition: all var(--transition-fast);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+
+        .frame-item:hover .frame-delete {
+            opacity: 1;
+        }
+
+        .frame-delete:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--transition-normal);
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            transform: scale(0.95);
+            transition: transform var(--transition-normal);
+        }
+
+        .modal-overlay.active .modal {
+            transform: scale(1);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        /* Progress */
+        .progress-container {
+            width: 100%;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 4px;
+            transition: width 0.1s linear;
+        }
+
+        .progress-text {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .toast {
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error { border-left: 3px solid var(--danger); }
+        .toast.warning { border-left: 3px solid var(--warning); }
+
+        /* Loading Spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-subtle);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty State */
+        .empty-frames {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        /* SVG Icons */
+        .icon {
+            width: 18px;
+            height: 18px;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            fill: none;
+        }
+
+        .icon-sm {
+            width: 14px;
+            height: 14px;
+        }
+
+        .icon-lg {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* GIF Info */
+        .gif-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .info-item {
+            background: var(--bg-tertiary);
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+        }
+
+        .info-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-family: var(--font-mono);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 240px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+            .header {
+                padding: 10px 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">GS</div>
+                <div class="logo-text">GIF <span>Studio</span></div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-secondary" id="importBtn">
+                    <svg class="icon icon-sm"><use href="#icon-upload"/></svg>
+                    Import GIF
+                </button>
+                <button class="btn btn-primary" id="exportBtn" disabled>
+                    <svg class="icon icon-sm"><use href="#icon-download"/></svg>
+                    Export GIF
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <!-- GIF Info -->
+                <div class="sidebar-section" id="gifInfoSection" style="display: none;">
+                    <div class="sidebar-title">GIF Information</div>
+                    <div class="gif-info">
+                        <div class="info-item">
+                            <div class="info-label">Dimensions</div>
+                            <div class="info-value" id="infoDimensions">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Frames</div>
+                            <div class="info-value" id="infoFrames">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Duration</div>
+                            <div class="info-value" id="infoDuration">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">File Size</div>
+                            <div class="info-value" id="infoSize">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Crop Tool -->
+                <div class="sidebar-section" id="cropSection" style="display: none;">
+                    <div class="sidebar-title">Crop</div>
+                    <div class="tool-group">
+                        <div class="input-row">
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">X</label>
+                                <input type="number" id="cropX" value="0" min="0">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">Y</label>
+                                <input type="number" id="cropY" value="0" min="0">
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">Width</label>
+                                <input type="number" id="cropW" value="100" min="1">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">Height</label>
+                                <input type="number" id="cropH" value="100" min="1">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" id="applyCrop" style="width: 100%;">
+                            Apply Crop
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Resize Tool -->
+                <div class="sidebar-section" id="resizeSection" style="display: none;">
+                    <div class="sidebar-title">Resize</div>
+                    <div class="tool-group">
+                        <div class="input-row">
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">Width</label>
+                                <input type="number" id="resizeW" value="100" min="1">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label">Height</label>
+                                <input type="number" id="resizeH" value="100" min="1">
+                            </div>
+                        </div>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="lockAspect" checked>
+                            Lock aspect ratio
+                        </label>
+                        <button class="btn btn-primary" id="applyResize" style="width: 100%;">
+                            Apply Resize
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Frame Timing -->
+                <div class="sidebar-section" id="timingSection" style="display: none;">
+                    <div class="sidebar-title">Frame Timing</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label">Delay (ms)</label>
+                            <input type="number" id="frameDelay" value="100" min="10" max="5000" step="10">
+                        </div>
+                        <div class="input-row">
+                            <button class="btn btn-secondary" id="applyDelaySelected" style="flex: 1;">
+                                Apply to Selected
+                            </button>
+                            <button class="btn btn-secondary" id="applyDelayAll" style="flex: 1;">
+                                Apply to All
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Playback Speed -->
+                <div class="sidebar-section" id="speedSection" style="display: none;">
+                    <div class="sidebar-title">Playback Speed</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <div class="input-row">
+                                <input type="range" id="speedSlider" min="0.25" max="3" step="0.25" value="1">
+                                <span class="zoom-display" id="speedDisplay">1x</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Export Settings -->
+                <div class="sidebar-section" id="exportSection" style="display: none;">
+                    <div class="sidebar-title">Export Settings</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label">Quality (1-30, lower = better)</label>
+                            <input type="range" id="qualitySlider" min="1" max="30" value="10">
+                            <span class="zoom-display" id="qualityDisplay">10</span>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">Dithering</label>
+                            <select id="ditherSelect">
+                                <option value="FloydSteinberg">Floyd-Steinberg</option>
+                                <option value="FalseFloydSteinberg">False Floyd-Steinberg</option>
+                                <option value="Stucki">Stucki</option>
+                                <option value="Atkinson">Atkinson</option>
+                            </select>
+                        </div>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="loopGif" checked>
+                            Loop forever
+                        </label>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Canvas Area -->
+            <div class="canvas-area">
+                <div class="canvas-toolbar">
+                    <button class="tool-btn" id="toolSelect" title="Select">
+                        <svg class="icon"><use href="#icon-cursor"/></svg>
+                    </button>
+                    <button class="tool-btn" id="toolCrop" title="Crop">
+                        <svg class="icon"><use href="#icon-crop"/></svg>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button class="tool-btn" id="zoomOut" title="Zoom Out">
+                        <svg class="icon"><use href="#icon-minus"/></svg>
+                    </button>
+                    <span class="zoom-display" id="zoomDisplay">100%</span>
+                    <button class="tool-btn" id="zoomIn" title="Zoom In">
+                        <svg class="icon"><use href="#icon-plus"/></svg>
+                    </button>
+                    <button class="tool-btn" id="zoomFit" title="Fit to View">
+                        <svg class="icon"><use href="#icon-maximize"/></svg>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button class="tool-btn" id="flipH" title="Flip Horizontal">
+                        <svg class="icon"><use href="#icon-flip-h"/></svg>
+                    </button>
+                    <button class="tool-btn" id="flipV" title="Flip Vertical">
+                        <svg class="icon"><use href="#icon-flip-v"/></svg>
+                    </button>
+                    <button class="tool-btn" id="rotate" title="Rotate 90°">
+                        <svg class="icon"><use href="#icon-rotate"/></svg>
+                    </button>
+                </div>
+
+                <div class="canvas-container">
+                    <!-- Drop Zone -->
+                    <div class="drop-zone" id="dropZone">
+                        <div class="drop-icon">
+                            <svg class="icon icon-lg"><use href="#icon-upload"/></svg>
+                        </div>
+                        <div class="drop-text">
+                            <h2>Drop your GIF here</h2>
+                            <p>or click Import to browse files</p>
+                        </div>
+                    </div>
+
+                    <!-- Canvas Wrapper -->
+                    <div class="canvas-wrapper" id="canvasWrapper" style="display: none;">
+                        <canvas id="mainCanvas"></canvas>
+                        <div class="crop-overlay" id="cropOverlay">
+                            <div class="crop-box" id="cropBox">
+                                <div class="crop-handle nw"></div>
+                                <div class="crop-handle ne"></div>
+                                <div class="crop-handle sw"></div>
+                                <div class="crop-handle se"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="timeline" id="timeline" style="display: none;">
+            <div class="timeline-header">
+                <div class="timeline-info">
+                    <div class="playback-controls">
+                        <button class="tool-btn" id="prevFrame" title="Previous Frame">
+                            <svg class="icon"><use href="#icon-skip-back"/></svg>
+                        </button>
+                        <button class="tool-btn" id="playPause" title="Play/Pause">
+                            <svg class="icon" id="playIcon"><use href="#icon-play"/></svg>
+                        </button>
+                        <button class="tool-btn" id="nextFrame" title="Next Frame">
+                            <svg class="icon"><use href="#icon-skip-forward"/></svg>
+                        </button>
+                    </div>
+                    <div class="timeline-stat">Frame: <span id="currentFrameNum">0</span> / <span id="totalFrames">0</span></div>
+                    <div class="timeline-stat">Delay: <span id="currentDelay">0</span>ms</div>
+                </div>
+                <div class="timeline-actions">
+                    <button class="btn btn-ghost btn-icon" id="duplicateFrame" title="Duplicate Frame">
+                        <svg class="icon"><use href="#icon-copy"/></svg>
+                    </button>
+                    <button class="btn btn-ghost btn-icon" id="deleteFrame" title="Delete Frame">
+                        <svg class="icon"><use href="#icon-trash"/></svg>
+                    </button>
+                    <button class="btn btn-ghost btn-icon" id="reverseFrames" title="Reverse All Frames">
+                        <svg class="icon"><use href="#icon-refresh"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="frames-container" id="framesContainer">
+                <div class="empty-frames">No frames loaded</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal-overlay" id="exportModal">
+        <div class="modal">
+            <div class="modal-title">Exporting GIF...</div>
+            <div class="modal-body">
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="exportProgress" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-text" id="exportStatus">Preparing frames...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Hidden file input -->
+    <input type="file" id="fileInput" accept=".gif,image/gif" style="display: none;">
+
+    <!-- SVG Icons -->
+    <svg style="display: none;">
+        <defs>
+            <symbol id="icon-upload" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </symbol>
+            <symbol id="icon-download" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </symbol>
+            <symbol id="icon-cursor" viewBox="0 0 24 24">
+                <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+                <path d="M13 13l6 6"/>
+            </symbol>
+            <symbol id="icon-crop" viewBox="0 0 24 24">
+                <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/>
+                <path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/>
+            </symbol>
+            <symbol id="icon-plus" viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </symbol>
+            <symbol id="icon-minus" viewBox="0 0 24 24">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </symbol>
+            <symbol id="icon-maximize" viewBox="0 0 24 24">
+                <polyline points="15 3 21 3 21 9"/>
+                <polyline points="9 21 3 21 3 15"/>
+                <line x1="21" y1="3" x2="14" y2="10"/>
+                <line x1="3" y1="21" x2="10" y2="14"/>
+            </symbol>
+            <symbol id="icon-play" viewBox="0 0 24 24">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </symbol>
+            <symbol id="icon-pause" viewBox="0 0 24 24">
+                <rect x="6" y="4" width="4" height="16"/>
+                <rect x="14" y="4" width="4" height="16"/>
+            </symbol>
+            <symbol id="icon-skip-back" viewBox="0 0 24 24">
+                <polygon points="19 20 9 12 19 4 19 20"/>
+                <line x1="5" y1="19" x2="5" y2="5"/>
+            </symbol>
+            <symbol id="icon-skip-forward" viewBox="0 0 24 24">
+                <polygon points="5 4 15 12 5 20 5 4"/>
+                <line x1="19" y1="5" x2="19" y2="19"/>
+            </symbol>
+            <symbol id="icon-copy" viewBox="0 0 24 24">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </symbol>
+            <symbol id="icon-trash" viewBox="0 0 24 24">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </symbol>
+            <symbol id="icon-refresh" viewBox="0 0 24 24">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </symbol>
+            <symbol id="icon-flip-h" viewBox="0 0 24 24">
+                <path d="M12 3v18"/>
+                <path d="M16 7l4 5-4 5"/>
+                <path d="M8 7l-4 5 4 5"/>
+            </symbol>
+            <symbol id="icon-flip-v" viewBox="0 0 24 24">
+                <path d="M3 12h18"/>
+                <path d="M7 8l5-4 5 4"/>
+                <path d="M7 16l5 4 5-4"/>
+            </symbol>
+            <symbol id="icon-rotate" viewBox="0 0 24 24">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </symbol>
+        </defs>
+    </svg>
+
+    <!-- Libraries -->
+    <script src="https://unpkg.com/gifuct-js@2.1.2/dist/gifuct-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+
+    <script>
+        // ============================================
+        // GIF Studio Pro - Main Application
+        // ============================================
+
+        class GIFEditor {
+            constructor() {
+                // State
+                this.frames = [];
+                this.currentFrame = 0;
+                this.isPlaying = false;
+                this.playInterval = null;
+                this.playbackSpeed = 1;
+                this.zoom = 1;
+                this.originalWidth = 0;
+                this.originalHeight = 0;
+                this.fileSize = 0;
+                this.activeTool = 'select';
+
+                // Crop state
+                this.cropRect = { x: 0, y: 0, w: 100, h: 100 };
+                this.isDraggingCrop = false;
+                this.cropDragStart = { x: 0, y: 0 };
+                this.cropDragType = null;
+
+                // Elements
+                this.canvas = document.getElementById('mainCanvas');
+                this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+                this.dropZone = document.getElementById('dropZone');
+                this.canvasWrapper = document.getElementById('canvasWrapper');
+                this.timeline = document.getElementById('timeline');
+                this.framesContainer = document.getElementById('framesContainer');
+                this.fileInput = document.getElementById('fileInput');
+
+                this.init();
+            }
+
+            init() {
+                this.bindEvents();
+                this.setActiveTool('select');
+            }
+
+            bindEvents() {
+                // File handling
+                document.getElementById('importBtn').addEventListener('click', () => this.fileInput.click());
+                this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files[0]));
+
+                // Drag and drop
+                this.dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    this.dropZone.classList.add('dragover');
+                });
+                this.dropZone.addEventListener('dragleave', () => {
+                    this.dropZone.classList.remove('dragover');
+                });
+                this.dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    this.dropZone.classList.remove('dragover');
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.type === 'image/gif') {
+                        this.handleFileSelect(file);
+                    }
+                });
+
+                // Tools
+                document.getElementById('toolSelect').addEventListener('click', () => this.setActiveTool('select'));
+                document.getElementById('toolCrop').addEventListener('click', () => this.setActiveTool('crop'));
+
+                // Zoom
+                document.getElementById('zoomIn').addEventListener('click', () => this.setZoom(this.zoom + 0.25));
+                document.getElementById('zoomOut').addEventListener('click', () => this.setZoom(this.zoom - 0.25));
+                document.getElementById('zoomFit').addEventListener('click', () => this.fitToView());
+
+                // Transforms
+                document.getElementById('flipH').addEventListener('click', () => this.flipHorizontal());
+                document.getElementById('flipV').addEventListener('click', () => this.flipVertical());
+                document.getElementById('rotate').addEventListener('click', () => this.rotate90());
+
+                // Playback
+                document.getElementById('playPause').addEventListener('click', () => this.togglePlay());
+                document.getElementById('prevFrame').addEventListener('click', () => this.goToFrame(this.currentFrame - 1));
+                document.getElementById('nextFrame').addEventListener('click', () => this.goToFrame(this.currentFrame + 1));
+
+                // Frame actions
+                document.getElementById('duplicateFrame').addEventListener('click', () => this.duplicateFrame());
+                document.getElementById('deleteFrame').addEventListener('click', () => this.deleteFrame());
+                document.getElementById('reverseFrames').addEventListener('click', () => this.reverseFrames());
+
+                // Crop controls
+                document.getElementById('applyCrop').addEventListener('click', () => this.applyCrop());
+                ['cropX', 'cropY', 'cropW', 'cropH'].forEach(id => {
+                    document.getElementById(id).addEventListener('input', () => this.updateCropFromInputs());
+                });
+
+                // Resize controls
+                document.getElementById('applyResize').addEventListener('click', () => this.applyResize());
+                document.getElementById('resizeW').addEventListener('input', () => this.handleResizeInput('width'));
+                document.getElementById('resizeH').addEventListener('input', () => this.handleResizeInput('height'));
+
+                // Timing controls
+                document.getElementById('applyDelaySelected').addEventListener('click', () => this.applyDelayToSelected());
+                document.getElementById('applyDelayAll').addEventListener('click', () => this.applyDelayToAll());
+
+                // Speed control
+                document.getElementById('speedSlider').addEventListener('input', (e) => {
+                    this.playbackSpeed = parseFloat(e.target.value);
+                    document.getElementById('speedDisplay').textContent = this.playbackSpeed + 'x';
+                });
+
+                // Quality display
+                document.getElementById('qualitySlider').addEventListener('input', (e) => {
+                    document.getElementById('qualityDisplay').textContent = e.target.value;
+                });
+
+                // Export
+                document.getElementById('exportBtn').addEventListener('click', () => this.exportGIF());
+
+                // Crop overlay interactions
+                this.initCropInteraction();
+
+                // Keyboard shortcuts
+                document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+            }
+
+            // ============================================
+            // File Loading
+            // ============================================
+
+            async handleFileSelect(file) {
+                if (!file || file.type !== 'image/gif') {
+                    this.showToast('Please select a valid GIF file', 'error');
+                    return;
+                }
+
+                this.fileSize = file.size;
+                this.showToast('Loading GIF...', 'info');
+
+                try {
+                    const buffer = await file.arrayBuffer();
+                    const gif = gifuct.parseGIF(buffer);
+                    const frames = gifuct.decompressFrames(gif, true);
+
+                    if (frames.length === 0) {
+                        throw new Error('No frames found in GIF');
+                    }
+
+                    this.loadFrames(frames);
+                    this.showEditor();
+                    this.showToast(`Loaded ${frames.length} frames`, 'success');
+
+                } catch (error) {
+                    console.error('Error loading GIF:', error);
+                    this.showToast('Failed to load GIF: ' + error.message, 'error');
+                }
+            }
+
+            loadFrames(rawFrames) {
+                this.frames = [];
+                
+                // Get GIF dimensions from first frame
+                const firstFrame = rawFrames[0];
+                this.originalWidth = firstFrame.dims.width;
+                this.originalHeight = firstFrame.dims.height;
+
+                // Find full canvas dimensions
+                let maxWidth = 0, maxHeight = 0;
+                rawFrames.forEach(f => {
+                    maxWidth = Math.max(maxWidth, f.dims.left + f.dims.width);
+                    maxHeight = Math.max(maxHeight, f.dims.top + f.dims.height);
+                });
+
+                this.originalWidth = maxWidth;
+                this.originalHeight = maxHeight;
+
+                // Create a temp canvas for compositing
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = this.originalWidth;
+                tempCanvas.height = this.originalHeight;
+                const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
+                // Process each frame
+                rawFrames.forEach((frame, index) => {
+                    // Handle disposal
+                    if (index === 0) {
+                        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    }
+
+                    // Create ImageData from patch
+                    const frameImageData = new ImageData(
+                        new Uint8ClampedArray(frame.patch),
+                        frame.dims.width,
+                        frame.dims.height
+                    );
+
+                    // Draw frame patch at correct position
+                    tempCtx.putImageData(frameImageData, frame.dims.left, frame.dims.top);
+
+                    // Create a canvas for this frame
+                    const frameCanvas = document.createElement('canvas');
+                    frameCanvas.width = this.originalWidth;
+                    frameCanvas.height = this.originalHeight;
+                    const frameCtx = frameCanvas.getContext('2d');
+                    frameCtx.drawImage(tempCanvas, 0, 0);
+
+                    this.frames.push({
+                        canvas: frameCanvas,
+                        delay: frame.delay * 10 || 100, // Convert to ms
+                        disposalType: frame.disposalType
+                    });
+
+                    // Handle disposal for next frame
+                    if (frame.disposalType === 2) {
+                        // Restore to background
+                        tempCtx.clearRect(frame.dims.left, frame.dims.top, frame.dims.width, frame.dims.height);
+                    } else if (frame.disposalType === 3 && index > 0) {
+                        // Restore to previous - copy previous frame
+                        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                        tempCtx.drawImage(this.frames[index - 1].canvas, 0, 0);
+                    }
+                });
+
+                this.currentFrame = 0;
+            }
+
+            showEditor() {
+                this.dropZone.classList.add('hidden');
+                this.canvasWrapper.style.display = 'block';
+                this.timeline.style.display = 'flex';
+
+                // Show sidebar sections
+                document.getElementById('gifInfoSection').style.display = 'block';
+                document.getElementById('cropSection').style.display = 'block';
+                document.getElementById('resizeSection').style.display = 'block';
+                document.getElementById('timingSection').style.display = 'block';
+                document.getElementById('speedSection').style.display = 'block';
+                document.getElementById('exportSection').style.display = 'block';
+
+                // Enable export
+                document.getElementById('exportBtn').disabled = false;
+
+                // Update UI
+                this.updateGIFInfo();
+                this.updateResizeInputs();
+                this.updateCropInputs();
+                this.renderTimeline();
+                this.renderFrame();
+                this.fitToView();
+            }
+
+            // ============================================
+            // Rendering
+            // ============================================
+
+            renderFrame() {
+                if (this.frames.length === 0) return;
+
+                const frame = this.frames[this.currentFrame];
+                this.canvas.width = this.originalWidth;
+                this.canvas.height = this.originalHeight;
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.drawImage(frame.canvas, 0, 0);
+
+                // Apply zoom
+                this.canvas.style.width = (this.originalWidth * this.zoom) + 'px';
+                this.canvas.style.height = (this.originalHeight * this.zoom) + 'px';
+
+                // Update UI
+                document.getElementById('currentFrameNum').textContent = this.currentFrame + 1;
+                document.getElementById('currentDelay').textContent = frame.delay;
+
+                // Update timeline selection
+                this.updateTimelineSelection();
+            }
+
+            renderTimeline() {
+                if (this.frames.length === 0) {
+                    this.framesContainer.innerHTML = '<div class="empty-frames">No frames loaded</div>';
+                    return;
+                }
+
+                document.getElementById('totalFrames').textContent = this.frames.length;
+
+                this.framesContainer.innerHTML = '';
+                
+                this.frames.forEach((frame, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'frame-item' + (index === this.currentFrame ? ' selected' : '');
+                    item.draggable = true;
+                    item.dataset.index = index;
+
+                    // Create thumbnail
+                    const thumb = document.createElement('canvas');
+                    thumb.className = 'frame-thumb';
+                    thumb.width = 80;
+                    thumb.height = 60;
+                    const thumbCtx = thumb.getContext('2d');
+                    
+                    // Scale to fit
+                    const scale = Math.min(80 / frame.canvas.width, 60 / frame.canvas.height);
+                    const w = frame.canvas.width * scale;
+                    const h = frame.canvas.height * scale;
+                    const x = (80 - w) / 2;
+                    const y = (60 - h) / 2;
+                    
+                    thumbCtx.fillStyle = '#000';
+                    thumbCtx.fillRect(0, 0, 80, 60);
+                    thumbCtx.drawImage(frame.canvas, x, y, w, h);
+
+                    const info = document.createElement('div');
+                    info.className = 'frame-info';
+                    info.innerHTML = `
+                        <span class="frame-number">#${index + 1}</span>
+                        <span>${frame.delay}ms</span>
+                    `;
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'frame-delete';
+                    deleteBtn.innerHTML = '×';
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.deleteFrameAt(index);
+                    });
+
+                    item.appendChild(thumb);
+                    item.appendChild(info);
+                    item.appendChild(deleteBtn);
+
+                    // Click to select
+                    item.addEventListener('click', () => {
+                        this.goToFrame(index);
+                    });
+
+                    // Drag events for reordering
+                    item.addEventListener('dragstart', (e) => {
+                        e.dataTransfer.setData('text/plain', index);
+                        item.classList.add('dragging');
+                    });
+
+                    item.addEventListener('dragend', () => {
+                        item.classList.remove('dragging');
+                    });
+
+                    item.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                    });
+
+                    item.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                        const toIndex = index;
+                        if (fromIndex !== toIndex) {
+                            this.reorderFrame(fromIndex, toIndex);
+                        }
+                    });
+
+                    this.framesContainer.appendChild(item);
+                });
+            }
+
+            updateTimelineSelection() {
+                const items = this.framesContainer.querySelectorAll('.frame-item');
+                items.forEach((item, index) => {
+                    item.classList.toggle('selected', index === this.currentFrame);
+                });
+
+                // Scroll into view
+                const selected = this.framesContainer.querySelector('.frame-item.selected');
+                if (selected) {
+                    selected.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                }
+            }
+
+            // ============================================
+            // Playback
+            // ============================================
+
+            togglePlay() {
+                if (this.isPlaying) {
+                    this.stopPlayback();
+                } else {
+                    this.startPlayback();
+                }
+            }
+
+            startPlayback() {
+                if (this.frames.length < 2) return;
+
+                this.isPlaying = true;
+                document.getElementById('playIcon').innerHTML = '<use href="#icon-pause"/>';
+                this.playNextFrame();
+            }
+
+            stopPlayback() {
+                this.isPlaying = false;
+                document.getElementById('playIcon').innerHTML = '<use href="#icon-play"/>';
+                if (this.playInterval) {
+                    clearTimeout(this.playInterval);
+                    this.playInterval = null;
+                }
+            }
+
+            playNextFrame() {
+                if (!this.isPlaying) return;
+
+                const frame = this.frames[this.currentFrame];
+                const delay = frame.delay / this.playbackSpeed;
+
+                this.playInterval = setTimeout(() => {
+                    this.currentFrame = (this.currentFrame + 1) % this.frames.length;
+                    this.renderFrame();
+                    this.playNextFrame();
+                }, delay);
+            }
+
+            goToFrame(index) {
+                if (index < 0) index = this.frames.length - 1;
+                if (index >= this.frames.length) index = 0;
+                
+                this.currentFrame = index;
+                this.renderFrame();
+                
+                // Update delay input
+                document.getElementById('frameDelay').value = this.frames[index].delay;
+            }
+
+            // ============================================
+            // Frame Operations
+            // ============================================
+
+            duplicateFrame() {
+                if (this.frames.length === 0) return;
+
+                const frame = this.frames[this.currentFrame];
+                const newCanvas = document.createElement('canvas');
+                newCanvas.width = frame.canvas.width;
+                newCanvas.height = frame.canvas.height;
+                newCanvas.getContext('2d').drawImage(frame.canvas, 0, 0);
+
+                this.frames.splice(this.currentFrame + 1, 0, {
+                    canvas: newCanvas,
+                    delay: frame.delay,
+                    disposalType: frame.disposalType
+                });
+
+                this.renderTimeline();
+                this.goToFrame(this.currentFrame + 1);
+                this.showToast('Frame duplicated', 'success');
+            }
+
+            deleteFrame() {
+                this.deleteFrameAt(this.currentFrame);
+            }
+
+            deleteFrameAt(index) {
+                if (this.frames.length <= 1) {
+                    this.showToast('Cannot delete the last frame', 'warning');
+                    return;
+                }
+
+                this.frames.splice(index, 1);
+                
+                if (this.currentFrame >= this.frames.length) {
+                    this.currentFrame = this.frames.length - 1;
+                }
+
+                this.renderTimeline();
+                this.renderFrame();
+                this.updateGIFInfo();
+                this.showToast('Frame deleted', 'success');
+            }
+
+            reorderFrame(fromIndex, toIndex) {
+                const [frame] = this.frames.splice(fromIndex, 1);
+                this.frames.splice(toIndex, 0, frame);
+                
+                // Update current frame index
+                if (this.currentFrame === fromIndex) {
+                    this.currentFrame = toIndex;
+                } else if (fromIndex < this.currentFrame && toIndex >= this.currentFrame) {
+                    this.currentFrame--;
+                } else if (fromIndex > this.currentFrame && toIndex <= this.currentFrame) {
+                    this.currentFrame++;
+                }
+
+                this.renderTimeline();
+                this.renderFrame();
+            }
+
+            reverseFrames() {
+                if (this.frames.length < 2) return;
+                
+                this.frames.reverse();
+                this.currentFrame = this.frames.length - 1 - this.currentFrame;
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Frames reversed', 'success');
+            }
+
+            // ============================================
+            // Timing
+            // ============================================
+
+            applyDelayToSelected() {
+                const delay = parseInt(document.getElementById('frameDelay').value) || 100;
+                this.frames[this.currentFrame].delay = delay;
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Delay applied to current frame', 'success');
+            }
+
+            applyDelayToAll() {
+                const delay = parseInt(document.getElementById('frameDelay').value) || 100;
+                this.frames.forEach(f => f.delay = delay);
+                this.renderTimeline();
+                this.updateGIFInfo();
+                this.showToast('Delay applied to all frames', 'success');
+            }
+
+            // ============================================
+            // Crop
+            // ============================================
+
+            initCropInteraction() {
+                const overlay = document.getElementById('cropOverlay');
+                const box = document.getElementById('cropBox');
+
+                overlay.addEventListener('mousedown', (e) => {
+                    if (this.activeTool !== 'crop') return;
+                    
+                    const rect = overlay.getBoundingClientRect();
+                    const x = (e.clientX - rect.left) / this.zoom;
+                    const y = (e.clientY - rect.top) / this.zoom;
+
+                    // Check if clicking on a handle
+                    const handles = box.querySelectorAll('.crop-handle');
+                    for (const handle of handles) {
+                        const hRect = handle.getBoundingClientRect();
+                        if (e.clientX >= hRect.left && e.clientX <= hRect.right &&
+                            e.clientY >= hRect.top && e.clientY <= hRect.bottom) {
+                            this.isDraggingCrop = true;
+                            this.cropDragType = handle.className.replace('crop-handle ', '');
+                            this.cropDragStart = { x: e.clientX, y: e.clientY };
+                            return;
+                        }
+                    }
+
+                    // Check if clicking inside box (move)
+                    if (x >= this.cropRect.x && x <= this.cropRect.x + this.cropRect.w &&
+                        y >= this.cropRect.y && y <= this.cropRect.y + this.cropRect.h) {
+                        this.isDraggingCrop = true;
+                        this.cropDragType = 'move';
+                        this.cropDragStart = { x: e.clientX, y: e.clientY };
+                    }
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (!this.isDraggingCrop) return;
+
+                    const dx = (e.clientX - this.cropDragStart.x) / this.zoom;
+                    const dy = (e.clientY - this.cropDragStart.y) / this.zoom;
+                    this.cropDragStart = { x: e.clientX, y: e.clientY };
+
+                    switch (this.cropDragType) {
+                        case 'move':
+                            this.cropRect.x = Math.max(0, Math.min(this.originalWidth - this.cropRect.w, this.cropRect.x + dx));
+                            this.cropRect.y = Math.max(0, Math.min(this.originalHeight - this.cropRect.h, this.cropRect.y + dy));
+                            break;
+                        case 'nw':
+                            const newX = Math.max(0, this.cropRect.x + dx);
+                            const newY = Math.max(0, this.cropRect.y + dy);
+                            this.cropRect.w += this.cropRect.x - newX;
+                            this.cropRect.h += this.cropRect.y - newY;
+                            this.cropRect.x = newX;
+                            this.cropRect.y = newY;
+                            break;
+                        case 'ne':
+                            this.cropRect.w = Math.max(10, Math.min(this.originalWidth - this.cropRect.x, this.cropRect.w + dx));
+                            const newYne = Math.max(0, this.cropRect.y + dy);
+                            this.cropRect.h += this.cropRect.y - newYne;
+                            this.cropRect.y = newYne;
+                            break;
+                        case 'sw':
+                            const newXsw = Math.max(0, this.cropRect.x + dx);
+                            this.cropRect.w += this.cropRect.x - newXsw;
+                            this.cropRect.x = newXsw;
+                            this.cropRect.h = Math.max(10, Math.min(this.originalHeight - this.cropRect.y, this.cropRect.h + dy));
+                            break;
+                        case 'se':
+                            this.cropRect.w = Math.max(10, Math.min(this.originalWidth - this.cropRect.x, this.cropRect.w + dx));
+                            this.cropRect.h = Math.max(10, Math.min(this.originalHeight - this.cropRect.y, this.cropRect.h + dy));
+                            break;
+                    }
+
+                    this.cropRect.w = Math.max(10, this.cropRect.w);
+                    this.cropRect.h = Math.max(10, this.cropRect.h);
+                    this.updateCropBox();
+                    this.updateCropInputs();
+                });
+
+                document.addEventListener('mouseup', () => {
+                    this.isDraggingCrop = false;
+                    this.cropDragType = null;
+                });
+            }
+
+            updateCropBox() {
+                const box = document.getElementById('cropBox');
+                box.style.left = (this.cropRect.x * this.zoom) + 'px';
+                box.style.top = (this.cropRect.y * this.zoom) + 'px';
+                box.style.width = (this.cropRect.w * this.zoom) + 'px';
+                box.style.height = (this.cropRect.h * this.zoom) + 'px';
+            }
+
+            updateCropInputs() {
+                document.getElementById('cropX').value = Math.round(this.cropRect.x);
+                document.getElementById('cropY').value = Math.round(this.cropRect.y);
+                document.getElementById('cropW').value = Math.round(this.cropRect.w);
+                document.getElementById('cropH').value = Math.round(this.cropRect.h);
+            }
+
+            updateCropFromInputs() {
+                this.cropRect.x = parseInt(document.getElementById('cropX').value) || 0;
+                this.cropRect.y = parseInt(document.getElementById('cropY').value) || 0;
+                this.cropRect.w = parseInt(document.getElementById('cropW').value) || 10;
+                this.cropRect.h = parseInt(document.getElementById('cropH').value) || 10;
+
+                // Clamp values
+                this.cropRect.x = Math.max(0, Math.min(this.originalWidth - 10, this.cropRect.x));
+                this.cropRect.y = Math.max(0, Math.min(this.originalHeight - 10, this.cropRect.y));
+                this.cropRect.w = Math.max(10, Math.min(this.originalWidth - this.cropRect.x, this.cropRect.w));
+                this.cropRect.h = Math.max(10, Math.min(this.originalHeight - this.cropRect.y, this.cropRect.h));
+
+                this.updateCropBox();
+            }
+
+            applyCrop() {
+                if (this.frames.length === 0) return;
+
+                const { x, y, w, h } = this.cropRect;
+                
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = w;
+                    newCanvas.height = h;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.drawImage(frame.canvas, -x, -y);
+                    frame.canvas = newCanvas;
+                });
+
+                this.originalWidth = w;
+                this.originalHeight = h;
+                this.cropRect = { x: 0, y: 0, w, h };
+
+                this.updateGIFInfo();
+                this.updateResizeInputs();
+                this.updateCropInputs();
+                this.renderTimeline();
+                this.renderFrame();
+                this.fitToView();
+                this.showToast('Crop applied', 'success');
+            }
+
+            // ============================================
+            // Resize
+            // ============================================
+
+            updateResizeInputs() {
+                document.getElementById('resizeW').value = this.originalWidth;
+                document.getElementById('resizeH').value = this.originalHeight;
+            }
+
+            handleResizeInput(dimension) {
+                if (!document.getElementById('lockAspect').checked) return;
+
+                const aspect = this.originalWidth / this.originalHeight;
+                
+                if (dimension === 'width') {
+                    const w = parseInt(document.getElementById('resizeW').value) || 1;
+                    document.getElementById('resizeH').value = Math.round(w / aspect);
+                } else {
+                    const h = parseInt(document.getElementById('resizeH').value) || 1;
+                    document.getElementById('resizeW').value = Math.round(h * aspect);
+                }
+            }
+
+            applyResize() {
+                if (this.frames.length === 0) return;
+
+                const newWidth = parseInt(document.getElementById('resizeW').value) || this.originalWidth;
+                const newHeight = parseInt(document.getElementById('resizeH').value) || this.originalHeight;
+
+                if (newWidth === this.originalWidth && newHeight === this.originalHeight) return;
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = newWidth;
+                    newCanvas.height = newHeight;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(frame.canvas, 0, 0, newWidth, newHeight);
+                    frame.canvas = newCanvas;
+                });
+
+                this.originalWidth = newWidth;
+                this.originalHeight = newHeight;
+                this.cropRect = { x: 0, y: 0, w: newWidth, h: newHeight };
+
+                this.updateGIFInfo();
+                this.updateCropInputs();
+                this.renderTimeline();
+                this.renderFrame();
+                this.fitToView();
+                this.showToast(`Resized to ${newWidth}×${newHeight}`, 'success');
+            }
+
+            // ============================================
+            // Transforms
+            // ============================================
+
+            flipHorizontal() {
+                if (this.frames.length === 0) return;
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = frame.canvas.width;
+                    newCanvas.height = frame.canvas.height;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.translate(newCanvas.width, 0);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(frame.canvas, 0, 0);
+                    frame.canvas = newCanvas;
+                });
+
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Flipped horizontally', 'success');
+            }
+
+            flipVertical() {
+                if (this.frames.length === 0) return;
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = frame.canvas.width;
+                    newCanvas.height = frame.canvas.height;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.translate(0, newCanvas.height);
+                    ctx.scale(1, -1);
+                    ctx.drawImage(frame.canvas, 0, 0);
+                    frame.canvas = newCanvas;
+                });
+
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Flipped vertically', 'success');
+            }
+
+            rotate90() {
+                if (this.frames.length === 0) return;
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = frame.canvas.height;
+                    newCanvas.height = frame.canvas.width;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.translate(newCanvas.width / 2, newCanvas.height / 2);
+                    ctx.rotate(Math.PI / 2);
+                    ctx.drawImage(frame.canvas, -frame.canvas.width / 2, -frame.canvas.height / 2);
+                    frame.canvas = newCanvas;
+                });
+
+                [this.originalWidth, this.originalHeight] = [this.originalHeight, this.originalWidth];
+                this.cropRect = { x: 0, y: 0, w: this.originalWidth, h: this.originalHeight };
+
+                this.updateGIFInfo();
+                this.updateResizeInputs();
+                this.updateCropInputs();
+                this.renderTimeline();
+                this.renderFrame();
+                this.fitToView();
+                this.showToast('Rotated 90°', 'success');
+            }
+
+            // ============================================
+            // Zoom
+            // ============================================
+
+            setZoom(level) {
+                this.zoom = Math.max(0.25, Math.min(4, level));
+                document.getElementById('zoomDisplay').textContent = Math.round(this.zoom * 100) + '%';
+                this.renderFrame();
+                if (this.activeTool === 'crop') {
+                    this.updateCropBox();
+                }
+            }
+
+            fitToView() {
+                const container = document.querySelector('.canvas-container');
+                const padding = 80;
+                const availableWidth = container.clientWidth - padding;
+                const availableHeight = container.clientHeight - padding;
+                
+                const scaleX = availableWidth / this.originalWidth;
+                const scaleY = availableHeight / this.originalHeight;
+                const scale = Math.min(scaleX, scaleY, 2);
+                
+                this.setZoom(scale);
+            }
+
+            // ============================================
+            // Tools
+            // ============================================
+
+            setActiveTool(tool) {
+                this.activeTool = tool;
+                
+                document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+                document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1)).classList.add('active');
+
+                const cropOverlay = document.getElementById('cropOverlay');
+                if (tool === 'crop') {
+                    cropOverlay.classList.add('active');
+                    this.cropRect = { x: 0, y: 0, w: this.originalWidth || 100, h: this.originalHeight || 100 };
+                    this.updateCropBox();
+                    this.updateCropInputs();
+                } else {
+                    cropOverlay.classList.remove('active');
+                }
+            }
+
+            // ============================================
+            // Export
+            // ============================================
+
+            async exportGIF() {
+                if (this.frames.length === 0) return;
+
+                const modal = document.getElementById('exportModal');
+                const progress = document.getElementById('exportProgress');
+                const status = document.getElementById('exportStatus');
+                modal.classList.add('active');
+
+                const quality = parseInt(document.getElementById('qualitySlider').value);
+                const dither = document.getElementById('ditherSelect').value;
+                const loop = document.getElementById('loopGif').checked ? 0 : -1;
+
+                try {
+                    const gif = new GIF({
+                        workers: 2,
+                        quality: quality,
+                        width: this.originalWidth,
+                        height: this.originalHeight,
+                        dither: dither,
+                        repeat: loop,
+                        workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+                    });
+
+                    // Add frames
+                    this.frames.forEach((frame, i) => {
+                        gif.addFrame(frame.canvas, { delay: frame.delay, copy: true });
+                        progress.style.width = ((i + 1) / this.frames.length * 50) + '%';
+                        status.textContent = `Adding frame ${i + 1} of ${this.frames.length}...`;
+                    });
+
+                    status.textContent = 'Encoding...';
+
+                    gif.on('progress', (p) => {
+                        progress.style.width = (50 + p * 50) + '%';
+                        status.textContent = `Encoding: ${Math.round(p * 100)}%`;
+                    });
+
+                    gif.on('finished', (blob) => {
+                        modal.classList.remove('active');
+                        
+                        // Download
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'edited.gif';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+
+                        this.showToast(`GIF exported (${this.formatBytes(blob.size)})`, 'success');
+                    });
+
+                    gif.render();
+
+                } catch (error) {
+                    modal.classList.remove('active');
+                    console.error('Export error:', error);
+                    this.showToast('Export failed: ' + error.message, 'error');
+                }
+            }
+
+            // ============================================
+            // UI Helpers
+            // ============================================
+
+            updateGIFInfo() {
+                document.getElementById('infoDimensions').textContent = `${this.originalWidth}×${this.originalHeight}`;
+                document.getElementById('infoFrames').textContent = this.frames.length;
+                
+                const totalDuration = this.frames.reduce((sum, f) => sum + f.delay, 0);
+                document.getElementById('infoDuration').textContent = (totalDuration / 1000).toFixed(2) + 's';
+                document.getElementById('infoSize').textContent = this.formatBytes(this.fileSize);
+            }
+
+            formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+            }
+
+            showToast(message, type = 'info') {
+                const container = document.getElementById('toastContainer');
+                const toast = document.createElement('div');
+                toast.className = 'toast ' + type;
+                toast.textContent = message;
+                container.appendChild(toast);
+
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(20px)';
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
+
+            handleKeyboard(e) {
+                // Don't trigger if typing in input
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+                switch (e.key) {
+                    case ' ':
+                        e.preventDefault();
+                        this.togglePlay();
+                        break;
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        this.goToFrame(this.currentFrame - 1);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        this.goToFrame(this.currentFrame + 1);
+                        break;
+                    case 'Delete':
+                    case 'Backspace':
+                        e.preventDefault();
+                        this.deleteFrame();
+                        break;
+                    case 'd':
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            this.duplicateFrame();
+                        }
+                        break;
+                    case '+':
+                    case '=':
+                        e.preventDefault();
+                        this.setZoom(this.zoom + 0.25);
+                        break;
+                    case '-':
+                        e.preventDefault();
+                        this.setZoom(this.zoom - 0.25);
+                        break;
+                    case '0':
+                        e.preventDefault();
+                        this.fitToView();
+                        break;
+                }
+            }
+        }
+
+        // Initialize the app
+        const editor = new GIFEditor();
+    </script>
+</body>
+</html>
