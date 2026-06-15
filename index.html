@@ -807,9 +807,39 @@
             }
         }
 
+        .mobile-menu-btn {
+            display: none;
+        }
+        .sidebar-overlay {
+            display: none;
+        }
+
         @media (max-width: 768px) {
+            .mobile-menu-btn {
+                display: inline-flex;
+            }
             .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform var(--transition-normal);
+                overflow-y: auto;
+            }
+            .sidebar.open {
+                transform: translateX(0);
+            }
+            .sidebar-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 199;
                 display: none;
+            }
+            .sidebar-overlay.active {
+                display: block;
             }
             .header {
                 padding: 10px 12px;
@@ -826,6 +856,9 @@
                 <div class="logo-text">GIF <span>Studio</span></div>
             </div>
             <div class="header-actions">
+                <button class="btn btn-secondary btn-icon mobile-menu-btn" id="mobileMenuBtn" title="Toggle sidebar" aria-label="Toggle sidebar">
+                    <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
                 <button class="btn btn-secondary" id="importBtn">
                     <svg class="icon icon-sm"><use href="#icon-upload"/></svg>
                     Import GIF
@@ -840,7 +873,8 @@
         <!-- Main Content -->
         <div class="main-content">
             <!-- Sidebar -->
-            <aside class="sidebar" aria-label="Edit tools">
+            <div class="sidebar-overlay" id="sidebarOverlay"></div>
+            <aside class="sidebar" id="sidebar" aria-label="Edit tools">
                 <!-- GIF Info -->
                 <div class="sidebar-section" id="gifInfoSection" style="display: none;">
                     <div class="sidebar-title">GIF Information</div>
@@ -1868,10 +1902,19 @@
                     this.showToast('Export cancelled', 'warning');
                 });
 
-                // Crop overlay interactions
                 this.initCropInteraction();
 
-                // Keyboard shortcuts
+                const sidebar = document.getElementById('sidebar');
+                const overlay = document.getElementById('sidebarOverlay');
+                document.getElementById('mobileMenuBtn').addEventListener('click', () => {
+                    sidebar.classList.toggle('open');
+                    overlay.classList.toggle('active');
+                });
+                overlay.addEventListener('click', () => {
+                    sidebar.classList.remove('open');
+                    overlay.classList.remove('active');
+                });
+
                 document.addEventListener('keydown', (e) => this.handleKeyboard(e));
             }
 
