@@ -1805,6 +1805,8 @@
                 this.deleteConfirmPending = false;
                 this.deleteConfirmTimer = null;
 
+                this.selectedFrames = new Set();
+
                 // Elements
                 this.canvas = document.getElementById('mainCanvas');
                 this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
@@ -2164,8 +2166,21 @@
                     item.appendChild(info);
                     item.appendChild(deleteBtn);
 
-                    // Click to select
-                    item.addEventListener('click', () => {
+                    item.addEventListener('click', (e) => {
+                        if (e.shiftKey && this.frames.length > 0) {
+                            const start = Math.min(this.currentFrame, index);
+                            const end = Math.max(this.currentFrame, index);
+                            this.selectedFrames.clear();
+                            for (let i = start; i <= end; i++) this.selectedFrames.add(i);
+                        } else if (e.ctrlKey || e.metaKey) {
+                            if (this.selectedFrames.has(index)) {
+                                this.selectedFrames.delete(index);
+                            } else {
+                                this.selectedFrames.add(index);
+                            }
+                        } else {
+                            this.selectedFrames.clear();
+                        }
                         this.goToFrame(index);
                     });
 
@@ -2199,10 +2214,13 @@
             updateTimelineSelection() {
                 const items = this.framesContainer.querySelectorAll('.frame-item');
                 items.forEach((item, index) => {
-                    item.classList.toggle('selected', index === this.currentFrame);
+                    const isCurrent = index === this.currentFrame;
+                    const isMultiSelected = this.selectedFrames.has(index);
+                    item.classList.toggle('selected', isCurrent || isMultiSelected);
+                    item.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+                    item.tabIndex = isCurrent ? 0 : -1;
                 });
 
-                // Scroll into view
                 const selected = this.framesContainer.querySelector('.frame-item.selected');
                 if (selected) {
                     selected.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
@@ -2287,6 +2305,24 @@
             }
 
             deleteFrame() {
+                if (this.selectedFrames.size > 1) {
+                    const indices = [...this.selectedFrames].sort((a, b) => b - a);
+                    if (indices.length >= this.frames.length) {
+                        this.showToast('Cannot delete all frames', 'warning');
+                        return;
+                    }
+                    indices.forEach(i => {
+                        this.releaseCanvas(this.frames[i].canvas);
+                        this.frames.splice(i, 1);
+                    });
+                    this.selectedFrames.clear();
+                    this.currentFrame = Math.min(this.currentFrame, this.frames.length - 1);
+                    this.renderTimeline();
+                    this.renderFrame();
+                    this.updateGIFInfo();
+                    this.showToast(`${indices.length} frames deleted`, 'success');
+                    return;
+                }
                 this.deleteFrameAt(this.currentFrame);
             }
 
@@ -2342,10 +2378,13 @@
 
             applyDelayToSelected() {
                 const delay = parseInt(document.getElementById('frameDelay').value) || 100;
-                this.frames[this.currentFrame].delay = delay;
+                const targets = this.selectedFrames.size > 1
+                    ? [...this.selectedFrames]
+                    : [this.currentFrame];
+                targets.forEach(i => { this.frames[i].delay = delay; });
                 this.renderTimeline();
                 this.renderFrame();
-                this.showToast('Delay applied to current frame', 'success');
+                this.showToast(`Delay applied to ${targets.length} frame${targets.length > 1 ? 's' : ''}`, 'success');
             }
 
             applyDelayToAll() {
