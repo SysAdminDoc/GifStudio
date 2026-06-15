@@ -1717,10 +1717,39 @@
                 const paletteSize = 256;
 
                 let frameIdx = 0;
+                let prevData = null;
+
+                function getDiffBounds(prev, curr, width, height) {
+                    let x1 = width, y1 = height, x2 = -1, y2 = -1;
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            if (prev[i] !== curr[i] || prev[i+1] !== curr[i+1] ||
+                                prev[i+2] !== curr[i+2] || prev[i+3] !== curr[i+3]) {
+                                if (x < x1) x1 = x;
+                                if (x > x2) x2 = x;
+                                if (y < y1) y1 = y;
+                                if (y > y2) y2 = y;
+                            }
+                        }
+                    }
+                    if (x2 < 0) return null;
+                    return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
+                }
+
+                function extractRegion(data, fullWidth, rx, ry, rw, rh) {
+                    const out = new Uint8ClampedArray(rw * rh * 4);
+                    for (let y = 0; y < rh; y++) {
+                        const srcOff = ((ry + y) * fullWidth + rx) * 4;
+                        const dstOff = y * rw * 4;
+                        out.set(data.subarray(srcOff, srcOff + rw * 4), dstOff);
+                    }
+                    return out;
+                }
+
                 const processFrame = () => {
                     if (this.aborted) { reject(new Error('Aborted')); return; }
                     if (frameIdx >= frames.length) {
-                        // Write GIF trailer
                         wb(0x3B);
                         const blob = new Blob([new Uint8Array(output)], { type: 'image/gif' });
                         resolve(blob);
@@ -1730,26 +1759,32 @@
                     const frame = frames[frameIdx];
                     if (onProgress) onProgress(frameIdx / frames.length);
 
-                    // Quantize
-                    const { palette, count: actualColors } = quantize(frame.data, maxColors);
-                    // Map pixels
-                    const indices = mapPixels(frame.data, palette, actualColors, w, h, doDither);
+                    let fx = 0, fy = 0, fw = w, fh = h;
+                    let pixelData = frame.data;
 
-                    // Graphic Control Extension
+                    if (frameIdx > 0 && prevData) {
+                        const diff = getDiffBounds(prevData, frame.data, w, h);
+                        if (diff && (diff.w < w || diff.h < h)) {
+                            fx = diff.x; fy = diff.y; fw = diff.w; fh = diff.h;
+                            pixelData = extractRegion(frame.data, w, fx, fy, fw, fh);
+                        }
+                    }
+                    prevData = frame.data;
+
+                    const { palette, count: actualColors } = quantize(pixelData, maxColors);
+                    const indices = mapPixels(pixelData, palette, actualColors, fw, fh, doDither);
+
                     wb(0x21); wb(0xF9); wb(0x04);
-                    wb(0x00); // disposal: do not dispose
-                    wUint16LE(Math.round(frame.delay / 10)); // centiseconds
-                    wb(0x00); // no transparent color
-                    wb(0x00); // block terminator
+                    wb(frameIdx === 0 ? 0x00 : 0x04);
+                    wUint16LE(Math.round(frame.delay / 10));
+                    wb(0x00);
+                    wb(0x00);
 
-                    // Image Descriptor
                     wb(0x2C);
-                    wUint16LE(0); wUint16LE(0); // left, top
-                    wUint16LE(w); wUint16LE(h);
-                    // packed: LCT present, size = palettePow
+                    wUint16LE(fx); wUint16LE(fy);
+                    wUint16LE(fw); wUint16LE(fh);
                     wb(0x80 | palettePow);
 
-                    // Local Color Table (256 colors)
                     for (let i = 0; i < paletteSize; i++) {
                         if (i * 3 + 2 < palette.length) {
                             wb(palette[i*3]); wb(palette[i*3+1]); wb(palette[i*3+2]);
@@ -1758,8 +1793,7 @@
                         }
                     }
 
-                    // LZW compressed image data
-                    const minCodeSize = 8; // for 256 colors
+                    const minCodeSize = 8;
                     wb(minCodeSize);
                     const lzwData = lzwEncode(indices, minCodeSize);
                     wBytes(lzwData);
