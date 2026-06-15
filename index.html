@@ -55,6 +55,7 @@
             color: var(--text-primary);
             min-height: 100vh;
             overflow-x: hidden;
+            scrollbar-color: var(--border-medium) var(--bg-secondary);
         }
 
         /* Scrollbar */
@@ -189,6 +190,22 @@
             padding: 0;
         }
 
+        .btn:focus-visible,
+        .tool-btn:focus-visible {
+            outline: 2px solid var(--accent-primary);
+            outline-offset: 2px;
+        }
+
+        .frame-item:focus-visible {
+            outline: 2px solid var(--accent-primary);
+            outline-offset: -2px;
+        }
+
+        select:focus-visible {
+            outline: 2px solid var(--accent-primary);
+            outline-offset: 1px;
+        }
+
         /* Main Content */
         .main-content {
             display: flex;
@@ -203,11 +220,12 @@
             border-right: 1px solid var(--border-subtle);
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            overflow-y: auto;
+            overflow-x: hidden;
         }
 
         .sidebar-section {
-            padding: 16px;
+            padding: 14px 16px;
             border-bottom: 1px solid var(--border-subtle);
         }
 
@@ -224,7 +242,7 @@
         .tool-group {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
         }
 
         .input-group {
@@ -429,7 +447,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 20px;
+            gap: 24px;
             background: var(--bg-primary);
             z-index: 50;
             transition: opacity var(--transition-normal);
@@ -441,25 +459,26 @@
         }
 
         .drop-zone.dragover {
-            background: var(--accent-glow);
+            background: rgba(34, 211, 238, 0.04);
         }
 
         .drop-icon {
-            width: 80px;
-            height: 80px;
+            width: 88px;
+            height: 88px;
             border: 2px dashed var(--border-medium);
-            border-radius: var(--radius-lg);
+            border-radius: 20px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: var(--text-muted);
-            transition: all var(--transition-normal);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .drop-zone.dragover .drop-icon {
             border-color: var(--accent-primary);
             color: var(--accent-primary);
-            transform: scale(1.1);
+            transform: scale(1.08);
+            box-shadow: 0 0 0 8px rgba(34, 211, 238, 0.06);
         }
 
         .drop-text {
@@ -467,14 +486,15 @@
         }
 
         .drop-text h2 {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
+            letter-spacing: -0.3px;
         }
 
         .drop-text p {
             color: var(--text-muted);
-            font-size: 14px;
+            font-size: 13px;
         }
 
         /* Timeline */
@@ -543,6 +563,7 @@
 
         .frame-item:hover {
             border-color: var(--border-medium);
+            transform: translateY(-1px);
         }
 
         .frame-item.selected {
@@ -563,7 +584,7 @@
 
         .frame-info {
             padding: 6px 8px;
-            font-size: 10px;
+            font-size: 11px;
             font-family: var(--font-mono);
             color: var(--text-muted);
             display: flex;
@@ -677,6 +698,17 @@
             transition: width 0.1s linear;
         }
 
+        .progress-fill.encoding {
+            background-size: 200% 100%;
+            background-image: linear-gradient(90deg, var(--accent-secondary), var(--accent-primary), var(--accent-secondary));
+            animation: shimmer 1.5s ease infinite;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
         .progress-text {
             font-family: var(--font-mono);
             font-size: 12px;
@@ -705,7 +737,10 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            font-size: 13px;
+            line-height: 1.4;
             animation: slideIn 0.3s ease;
+            max-width: 360px;
         }
 
         @keyframes slideIn {
@@ -748,10 +783,13 @@
         .empty-frames {
             flex: 1;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             color: var(--text-muted);
-            font-size: 14px;
+            font-size: 13px;
+            gap: 4px;
+            user-select: none;
         }
 
         /* SVG Icons */
@@ -801,6 +839,15 @@
             font-weight: 500;
         }
 
+        .platform-badges {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.2px;
+        }
+
         /* Responsive */
         @media (max-width: 1024px) {
             .sidebar {
@@ -812,7 +859,17 @@
             display: none;
         }
         .sidebar-overlay {
-            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 199;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--transition-normal);
+        }
+        .sidebar-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
         }
 
         @media (max-width: 768px) {
@@ -837,10 +894,13 @@
                 inset: 0;
                 background: rgba(0,0,0,0.5);
                 z-index: 199;
-                display: none;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity var(--transition-normal);
             }
             .sidebar-overlay.active {
-                display: block;
+                opacity: 1;
+                pointer-events: auto;
             }
             .header {
                 padding: 10px 12px;
@@ -994,7 +1054,7 @@
                             <input type="text" id="exportFilename" value="edited" placeholder="filename (no .gif)">
                         </div>
                         <div class="input-group">
-                            <label class="input-label">Quality (1-30, lower = better)</label>
+                            <label class="input-label">Quality</label>
                             <input type="range" id="qualitySlider" min="1" max="30" value="10">
                             <span class="zoom-display" id="qualityDisplay">10</span>
                         </div>
@@ -1022,7 +1082,7 @@
                         <div class="info-item" style="margin-top: 8px;">
                             <div class="info-label">Estimated Size</div>
                             <div class="info-value" id="sizeEstimate">-</div>
-                            <div id="platformBadges" style="margin-top: 4px; font-size: 10px; font-family: var(--font-mono);"></div>
+                            <div id="platformBadges" class="platform-badges"></div>
                         </div>
                     </div>
                 </div>
@@ -1139,7 +1199,9 @@
                     </div>
                     <div class="progress-text" id="exportStatus">Preparing frames...</div>
                 </div>
-                <button class="btn btn-secondary" id="cancelExportBtn" style="margin-top: 16px; width: 100%;">Cancel</button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" id="cancelExportBtn">Cancel</button>
             </div>
         </div>
     </div>
@@ -1938,7 +2000,9 @@
                 });
 
                 document.getElementById('qualitySlider').addEventListener('input', (e) => {
-                    document.getElementById('qualityDisplay').textContent = e.target.value;
+                    const v = parseInt(e.target.value);
+                    const label = v <= 5 ? 'Best' : v <= 15 ? 'Good' : v <= 25 ? 'Fast' : 'Fastest';
+                    document.getElementById('qualityDisplay').textContent = label;
                     this.updateSizeEstimate();
                 });
 
@@ -2796,6 +2860,7 @@
                     });
 
                     status.textContent = 'Encoding...';
+                    progress.classList.add('encoding');
 
                     const blob = await encoder.render((p) => {
                         progress.style.width = (40 + p * 60) + '%';
@@ -2803,6 +2868,7 @@
                     });
 
                     this.currentEncoder = null;
+                    progress.classList.remove('encoding');
                     modal.classList.remove('active');
 
                     const sizeText = this.formatBytes(blob.size);
@@ -2842,6 +2908,7 @@
 
                 } catch (error) {
                     this.currentEncoder = null;
+                    progress.classList.remove('encoding');
                     if (error.message !== 'Aborted') {
                         modal.classList.remove('active');
                         console.error('Export error:', error);
@@ -2902,7 +2969,14 @@
                 const container = document.getElementById('toastContainer');
                 const toast = document.createElement('div');
                 toast.className = 'toast ' + type;
-                toast.textContent = message;
+                const icons = { success: '✓', error: '✕', warning: '⚠', info: '●' };
+                const iconEl = document.createElement('span');
+                iconEl.style.cssText = 'font-weight:700; font-size:14px; flex-shrink:0; width:18px; text-align:center;';
+                iconEl.textContent = icons[type] || icons.info;
+                toast.appendChild(iconEl);
+                const msgEl = document.createElement('span');
+                msgEl.textContent = message;
+                toast.appendChild(msgEl);
                 container.appendChild(toast);
 
                 setTimeout(() => {
