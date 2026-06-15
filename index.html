@@ -949,7 +949,7 @@
                 </button>
                 <button class="btn btn-secondary" id="importBtn">
                     <svg class="icon icon-sm"><use href="#icon-upload"/></svg>
-                    Import GIF
+                    Import
                 </button>
                 <button class="btn btn-primary" id="exportBtn" disabled>
                     <svg class="icon icon-sm"><use href="#icon-download"/></svg>
@@ -1203,8 +1203,8 @@
                             <svg class="icon icon-lg"><use href="#icon-upload"/></svg>
                         </div>
                         <div class="drop-text" id="dropText">
-                            <h2>Drop your GIF here</h2>
-                            <p>or click Import to browse files</p>
+                            <h2>Drop files here</h2>
+                            <p>GIF to edit, or images to create a new GIF</p>
                         </div>
                         <div id="parseSpinner" style="display:none; flex-direction:column; align-items:center; gap:12px;">
                             <div class="spinner"></div>
@@ -1286,7 +1286,7 @@
     <div class="toast-container" id="toastContainer" aria-live="polite" role="status"></div>
 
     <!-- Hidden file input -->
-    <input type="file" id="fileInput" accept=".gif,image/gif" style="display: none;" aria-hidden="true" tabindex="-1">
+    <input type="file" id="fileInput" accept=".gif,image/gif,image/png,image/jpeg,image/webp" multiple style="display: none;" aria-hidden="true" tabindex="-1">
 
     <!-- SVG Icons -->
     <svg style="display: none;">
@@ -2011,7 +2011,14 @@
             bindEvents() {
                 // File handling
                 document.getElementById('importBtn').addEventListener('click', () => this.fileInput.click());
-                this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files[0]));
+                this.fileInput.addEventListener('change', (e) => {
+                    const files = Array.from(e.target.files);
+                    if (files.length === 1 && files[0].type === 'image/gif') {
+                        this.handleFileSelect(files[0]);
+                    } else if (files.length >= 1) {
+                        this.handleImageFiles(files);
+                    }
+                });
 
                 // Drag and drop
                 this.dropZone.addEventListener('dragover', (e) => {
@@ -2024,9 +2031,11 @@
                 this.dropZone.addEventListener('drop', (e) => {
                     e.preventDefault();
                     this.dropZone.classList.remove('dragover');
-                    const file = e.dataTransfer.files[0];
-                    if (file && file.type === 'image/gif') {
-                        this.handleFileSelect(file);
+                    const files = Array.from(e.dataTransfer.files);
+                    if (files.length === 1 && files[0].type === 'image/gif') {
+                        this.handleFileSelect(files[0]);
+                    } else if (files.length >= 1 && files.every(f => f.type.startsWith('image/'))) {
+                        this.handleImageFiles(files);
                     }
                 });
 
@@ -2196,6 +2205,64 @@
                     console.error('Error loading GIF:', error);
                     this.showToast('Failed to load GIF: ' + error.message, 'error');
                     // Reset spinner
+                    document.getElementById('dropIcon').style.display = '';
+                    document.getElementById('dropText').style.display = '';
+                    document.getElementById('parseSpinner').style.display = 'none';
+                }
+            }
+
+            async handleImageFiles(files) {
+                this.fileInput.value = '';
+                const imageFiles = files.filter(f => f.type.startsWith('image/'));
+                if (imageFiles.length === 0) {
+                    this.showToast('No valid image files found', 'error');
+                    return;
+                }
+
+                document.getElementById('dropIcon').style.display = 'none';
+                document.getElementById('dropText').style.display = 'none';
+                document.getElementById('parseSpinner').style.display = 'flex';
+
+                try {
+                    const loadImage = (file) => new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => { URL.revokeObjectURL(img.src); resolve(img); };
+                        img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error(`Failed to load ${file.name}`)); };
+                        img.src = URL.createObjectURL(file);
+                    });
+
+                    const images = await Promise.all(imageFiles.map(loadImage));
+                    const maxW = Math.max(...images.map(i => i.naturalWidth));
+                    const maxH = Math.max(...images.map(i => i.naturalHeight));
+
+                    this.originalWidth = maxW;
+                    this.originalHeight = maxH;
+                    this.frames = [];
+                    this.rawGifMeta = null;
+                    this.fileSize = imageFiles.reduce((s, f) => s + f.size, 0);
+                    this.originalFilename = imageFiles[0].name.replace(/\.[^.]+$/, '') || 'sequence';
+                    const filenameInput = document.getElementById('exportFilename');
+                    if (filenameInput) filenameInput.value = this.originalFilename + '-animated';
+
+                    images.forEach(img => {
+                        const c = document.createElement('canvas');
+                        c.width = maxW;
+                        c.height = maxH;
+                        const ctx = c.getContext('2d');
+                        const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+                        const w = img.naturalWidth * scale;
+                        const h = img.naturalHeight * scale;
+                        ctx.drawImage(img, (maxW - w) / 2, (maxH - h) / 2, w, h);
+                        this.frames.push({ canvas: c, delay: 100, disposalType: 0 });
+                    });
+
+                    this.currentFrame = 0;
+                    this.selectedFrames.clear();
+                    this.showEditor();
+                    this.showToast(`Created GIF from ${images.length} images`, 'success');
+                } catch (error) {
+                    console.error('Error loading images:', error);
+                    this.showToast('Failed to load images: ' + error.message, 'error');
                     document.getElementById('dropIcon').style.display = '';
                     document.getElementById('dropText').style.display = '';
                     document.getElementById('parseSpinner').style.display = 'none';
