@@ -2805,26 +2805,39 @@
                     this.currentEncoder = null;
                     modal.classList.remove('active');
 
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename + '.gif';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    this.revokeBlob(url);
-
                     const sizeText = this.formatBytes(blob.size);
-                    if (navigator.share && navigator.canShare) {
-                        const file = new File([blob], filename + '.gif', { type: 'image/gif' });
-                        if (navigator.canShare({ files: [file] })) {
-                            this.showToast(`GIF exported (${sizeText}) — tap Share to send`, 'success');
-                            try { await navigator.share({ files: [file] }); } catch {}
-                        } else {
-                            this.showToast(`GIF exported (${sizeText})`, 'success');
+                    const fullFilename = filename + '.gif';
+
+                    if (window.showSaveFilePicker) {
+                        try {
+                            const handle = await window.showSaveFilePicker({
+                                suggestedName: fullFilename,
+                                types: [{ description: 'GIF Image', accept: { 'image/gif': ['.gif'] } }]
+                            });
+                            const writable = await handle.createWritable();
+                            await writable.write(blob);
+                            await writable.close();
+                            this.showToast(`GIF saved (${sizeText})`, 'success');
+                        } catch (e) {
+                            if (e.name !== 'AbortError') throw e;
                         }
                     } else {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = fullFilename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        this.revokeBlob(url);
                         this.showToast(`GIF exported (${sizeText})`, 'success');
+                    }
+
+                    if (navigator.share && navigator.canShare) {
+                        const file = new File([blob], fullFilename, { type: 'image/gif' });
+                        if (navigator.canShare({ files: [file] })) {
+                            try { await navigator.share({ files: [file] }); } catch {}
+                        }
                     }
 
                 } catch (error) {
