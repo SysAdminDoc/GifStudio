@@ -955,6 +955,10 @@
                     <svg class="icon icon-sm"><use href="#icon-download"/></svg>
                     Export GIF
                 </button>
+                <button class="btn btn-secondary" id="shareBtn" style="display:none;" title="Share exported GIF">
+                    <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    Share
+                </button>
             </div>
         </header>
 
@@ -2035,6 +2039,11 @@
 
                 // Export
                 document.getElementById('exportBtn').addEventListener('click', () => this.exportGIF());
+                document.getElementById('shareBtn').addEventListener('click', async () => {
+                    if (this.lastExportFile) {
+                        try { await navigator.share({ files: [this.lastExportFile] }); } catch {}
+                    }
+                });
                 document.getElementById('cancelExportBtn').addEventListener('click', () => {
                     if (this.currentEncoder) this.currentEncoder.abort();
                     document.getElementById('exportProgress').classList.remove('encoding');
@@ -2063,6 +2072,7 @@
             // ============================================
 
             async handleFileSelect(file) {
+                this.fileInput.value = '';
                 if (!file || file.type !== 'image/gif') {
                     this.showToast('Please select a valid GIF file', 'error');
                     return;
@@ -2928,9 +2938,10 @@
                     }
 
                     if (navigator.share && navigator.canShare) {
-                        const file = new File([blob], fullFilename, { type: 'image/gif' });
-                        if (navigator.canShare({ files: [file] })) {
-                            try { await navigator.share({ files: [file] }); } catch {}
+                        const shareFile = new File([blob], fullFilename, { type: 'image/gif' });
+                        if (navigator.canShare({ files: [shareFile] })) {
+                            this.lastExportFile = shareFile;
+                            document.getElementById('shareBtn').style.display = '';
                         }
                     }
 

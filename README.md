@@ -11,7 +11,7 @@ Browser-based GIF creation and editing studio. Create, edit, and export GIFs wit
 - **GIF Creation** — Build GIFs from images or video frames
 - **Frame Editor** — Add, remove, reorder, and duplicate frames
 - **Timing Control** — Set per-frame delay and playback speed
-- **Effects** — Apply filters, resize, crop, and transform frames
+- **Transforms** — Resize, crop, flip, and rotate frames
 - **Live Preview** — Real-time GIF preview as you edit
 - **Export** — Download finished GIFs at configurable quality
 - **Dark Theme** — Professional dark-themed interface
