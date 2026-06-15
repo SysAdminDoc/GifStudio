@@ -2405,15 +2405,37 @@
             }
 
             renderTimeline() {
+                if (this.thumbObserver) this.thumbObserver.disconnect();
+
                 if (this.frames.length === 0) {
                     this.framesContainer.innerHTML = '<div class="empty-frames">No frames loaded</div>';
                     return;
                 }
 
                 document.getElementById('totalFrames').textContent = this.frames.length;
-
                 this.framesContainer.innerHTML = '';
-                
+
+                this.thumbObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (!entry.isIntersecting) return;
+                        const item = entry.target;
+                        const idx = parseInt(item.dataset.index);
+                        const thumb = item.querySelector('.frame-thumb');
+                        if (!thumb || thumb.dataset.drawn) return;
+                        const frame = this.frames[idx];
+                        if (!frame) return;
+                        const thumbCtx = thumb.getContext('2d');
+                        const scale = Math.min(80 / frame.canvas.width, 60 / frame.canvas.height);
+                        const w = frame.canvas.width * scale, h = frame.canvas.height * scale;
+                        thumbCtx.fillStyle = '#000';
+                        thumbCtx.fillRect(0, 0, 80, 60);
+                        thumbCtx.drawImage(frame.canvas, (80 - w) / 2, (60 - h) / 2, w, h);
+                        thumb.dataset.drawn = '1';
+                    });
+                }, { root: this.framesContainer, rootMargin: '200px' });
+
+                const frag = document.createDocumentFragment();
+
                 this.frames.forEach((frame, index) => {
                     const item = document.createElement('div');
                     item.className = 'frame-item' + (index === this.currentFrame ? ' selected' : '');
@@ -2424,30 +2446,14 @@
                     item.setAttribute('aria-label', `Frame ${index + 1}, ${frame.delay}ms`);
                     item.tabIndex = index === this.currentFrame ? 0 : -1;
 
-                    // Create thumbnail
                     const thumb = document.createElement('canvas');
                     thumb.className = 'frame-thumb';
                     thumb.width = 80;
                     thumb.height = 60;
-                    const thumbCtx = thumb.getContext('2d');
-                    
-                    // Scale to fit
-                    const scale = Math.min(80 / frame.canvas.width, 60 / frame.canvas.height);
-                    const w = frame.canvas.width * scale;
-                    const h = frame.canvas.height * scale;
-                    const x = (80 - w) / 2;
-                    const y = (60 - h) / 2;
-                    
-                    thumbCtx.fillStyle = '#000';
-                    thumbCtx.fillRect(0, 0, 80, 60);
-                    thumbCtx.drawImage(frame.canvas, x, y, w, h);
 
                     const info = document.createElement('div');
                     info.className = 'frame-info';
-                    info.innerHTML = `
-                        <span class="frame-number">#${index + 1}</span>
-                        <span>${frame.delay}ms</span>
-                    `;
+                    info.innerHTML = `<span class="frame-number">#${index + 1}</span><span>${frame.delay}ms</span>`;
 
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'frame-delete';
@@ -2468,42 +2474,31 @@
                             this.selectedFrames.clear();
                             for (let i = start; i <= end; i++) this.selectedFrames.add(i);
                         } else if (e.ctrlKey || e.metaKey) {
-                            if (this.selectedFrames.has(index)) {
-                                this.selectedFrames.delete(index);
-                            } else {
-                                this.selectedFrames.add(index);
-                            }
+                            if (this.selectedFrames.has(index)) this.selectedFrames.delete(index);
+                            else this.selectedFrames.add(index);
                         } else {
                             this.selectedFrames.clear();
                         }
                         this.goToFrame(index);
                     });
 
-                    // Drag events for reordering
                     item.addEventListener('dragstart', (e) => {
                         e.dataTransfer.setData('text/plain', index);
                         item.classList.add('dragging');
                     });
-
-                    item.addEventListener('dragend', () => {
-                        item.classList.remove('dragging');
-                    });
-
-                    item.addEventListener('dragover', (e) => {
-                        e.preventDefault();
-                    });
-
+                    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+                    item.addEventListener('dragover', (e) => e.preventDefault());
                     item.addEventListener('drop', (e) => {
                         e.preventDefault();
                         const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
-                        const toIndex = index;
-                        if (fromIndex !== toIndex) {
-                            this.reorderFrame(fromIndex, toIndex);
-                        }
+                        if (fromIndex !== index) this.reorderFrame(fromIndex, index);
                     });
 
-                    this.framesContainer.appendChild(item);
+                    frag.appendChild(item);
+                    this.thumbObserver.observe(item);
                 });
+
+                this.framesContainer.appendChild(frag);
             }
 
             updateTimelineSelection() {
