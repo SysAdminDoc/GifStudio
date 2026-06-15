@@ -840,7 +840,7 @@
         <!-- Main Content -->
         <div class="main-content">
             <!-- Sidebar -->
-            <aside class="sidebar">
+            <aside class="sidebar" aria-label="Edit tools">
                 <!-- GIF Info -->
                 <div class="sidebar-section" id="gifInfoSection" style="display: none;">
                     <div class="sidebar-title">GIF Information</div>
@@ -974,6 +974,11 @@
                             <input type="checkbox" id="loopGif" checked>
                             Loop forever
                         </label>
+                        <div class="info-item" style="margin-top: 8px;">
+                            <div class="info-label">Estimated Size</div>
+                            <div class="info-value" id="sizeEstimate">-</div>
+                            <div id="platformBadges" style="margin-top: 4px; font-size: 10px; font-family: var(--font-mono);"></div>
+                        </div>
                     </div>
                 </div>
             </aside>
@@ -1028,7 +1033,7 @@
 
                     <!-- Canvas Wrapper -->
                     <div class="canvas-wrapper" id="canvasWrapper" style="display: none;">
-                        <canvas id="mainCanvas"></canvas>
+                        <canvas id="mainCanvas" role="img" aria-label="GIF preview canvas"></canvas>
                         <div class="crop-overlay" id="cropOverlay">
                             <div class="crop-box" id="cropBox">
                                 <div class="crop-handle nw"></div>
@@ -1072,7 +1077,7 @@
                     </button>
                 </div>
             </div>
-            <div class="frames-container" id="framesContainer">
+            <div class="frames-container" id="framesContainer" role="listbox" aria-label="Animation frames">
                 <div class="empty-frames">No frames loaded</div>
             </div>
         </div>
@@ -1080,7 +1085,7 @@
 
     <!-- Export Modal -->
     <div class="modal-overlay" id="exportModal">
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-label="Export progress">
             <div class="modal-title">Exporting GIF...</div>
             <div class="modal-body">
                 <div class="progress-container">
@@ -1095,7 +1100,7 @@
     </div>
 
     <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" aria-live="polite" role="status"></div>
 
     <!-- Hidden file input -->
     <input type="file" id="fileInput" accept=".gif,image/gif" style="display: none;">
@@ -1762,6 +1767,10 @@
                 this.cropDragStart = { x: 0, y: 0 };
                 this.cropDragType = null;
 
+                // Delete confirmation state
+                this.deleteConfirmPending = false;
+                this.deleteConfirmTimer = null;
+
                 // Elements
                 this.canvas = document.getElementById('mainCanvas');
                 this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
@@ -1846,9 +1855,9 @@
                     document.getElementById('speedDisplay').textContent = this.playbackSpeed + 'x';
                 });
 
-                // Quality display
                 document.getElementById('qualitySlider').addEventListener('input', (e) => {
                     document.getElementById('qualityDisplay').textContent = e.target.value;
+                    this.updateSizeEstimate();
                 });
 
                 // Export
@@ -2070,6 +2079,10 @@
                     item.className = 'frame-item' + (index === this.currentFrame ? ' selected' : '');
                     item.draggable = true;
                     item.dataset.index = index;
+                    item.setAttribute('role', 'option');
+                    item.setAttribute('aria-selected', index === this.currentFrame ? 'true' : 'false');
+                    item.setAttribute('aria-label', `Frame ${index + 1}, ${frame.delay}ms`);
+                    item.tabIndex = index === this.currentFrame ? 0 : -1;
 
                     // Create thumbnail
                     const thumb = document.createElement('canvas');
@@ -2690,10 +2703,37 @@
             updateGIFInfo() {
                 document.getElementById('infoDimensions').textContent = `${this.originalWidth}×${this.originalHeight}`;
                 document.getElementById('infoFrames').textContent = this.frames.length;
-                
+
                 const totalDuration = this.frames.reduce((sum, f) => sum + f.delay, 0);
                 document.getElementById('infoDuration').textContent = (totalDuration / 1000).toFixed(2) + 's';
                 document.getElementById('infoSize').textContent = this.formatBytes(this.fileSize);
+                this.updateSizeEstimate();
+            }
+
+            updateSizeEstimate() {
+                const el = document.getElementById('sizeEstimate');
+                const badges = document.getElementById('platformBadges');
+                if (!el || this.frames.length === 0) return;
+
+                const pixels = this.originalWidth * this.originalHeight;
+                const quality = parseInt(document.getElementById('qualitySlider').value) || 10;
+                const compressionRatio = 0.05 + (quality / 30) * 0.15;
+                const bytesPerFrame = pixels * 3 * compressionRatio;
+                const overhead = 800 + this.frames.length * 20;
+                const estimated = Math.round(overhead + bytesPerFrame * this.frames.length);
+
+                el.textContent = '~' + this.formatBytes(estimated);
+
+                const limits = [
+                    { name: 'Discord', max: 8 * 1024 * 1024 },
+                    { name: 'Slack', max: 8 * 1024 * 1024 },
+                    { name: 'Twitter', max: 15 * 1024 * 1024 }
+                ];
+                badges.innerHTML = limits.map(l => {
+                    const ok = estimated <= l.max;
+                    const color = ok ? 'var(--success)' : 'var(--danger)';
+                    return `<span style="color:${color}">${ok ? '✓' : '✗'} ${l.name}</span>`;
+                }).join('  ');
             }
 
             formatBytes(bytes) {
@@ -2719,7 +2759,16 @@
             }
 
             handleKeyboard(e) {
-                // Don't trigger if typing in input
+                if (e.key === 'Escape') {
+                    const modal = document.getElementById('exportModal');
+                    if (modal.classList.contains('active')) {
+                        if (this.currentEncoder) this.currentEncoder.abort();
+                        modal.classList.remove('active');
+                        this.showToast('Export cancelled', 'warning');
+                        return;
+                    }
+                }
+
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
                 switch (e.key) {
@@ -2738,7 +2787,17 @@
                     case 'Delete':
                     case 'Backspace':
                         e.preventDefault();
-                        this.deleteFrame();
+                        if (this.deleteConfirmPending) {
+                            clearTimeout(this.deleteConfirmTimer);
+                            this.deleteConfirmPending = false;
+                            this.deleteFrame();
+                        } else {
+                            this.deleteConfirmPending = true;
+                            this.showToast('Press Delete again to confirm', 'warning');
+                            this.deleteConfirmTimer = setTimeout(() => {
+                                this.deleteConfirmPending = false;
+                            }, 2000);
+                        }
                         break;
                     case 'd':
                         if (e.ctrlKey || e.metaKey) {
