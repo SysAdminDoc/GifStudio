@@ -1076,6 +1076,45 @@
                     </div>
                 </div>
 
+                <!-- Filters -->
+                <div class="sidebar-section" id="filtersSection" style="display: none;">
+                    <div class="sidebar-title">Filters</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label" for="filterBrightness">Brightness</label>
+                            <div class="input-row">
+                                <input type="range" id="filterBrightness" min="0" max="200" value="100" step="5">
+                                <span class="zoom-display" id="filterBrightnessVal">100%</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="filterContrast">Contrast</label>
+                            <div class="input-row">
+                                <input type="range" id="filterContrast" min="0" max="200" value="100" step="5">
+                                <span class="zoom-display" id="filterContrastVal">100%</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="filterSaturate">Saturation</label>
+                            <div class="input-row">
+                                <input type="range" id="filterSaturate" min="0" max="200" value="100" step="5">
+                                <span class="zoom-display" id="filterSaturateVal">100%</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="filterHueRotate">Hue Rotate</label>
+                            <div class="input-row">
+                                <input type="range" id="filterHueRotate" min="0" max="360" value="0" step="5">
+                                <span class="zoom-display" id="filterHueRotateVal">0°</span>
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <button class="btn btn-secondary" id="resetFilters" style="flex: 1;">Reset</button>
+                            <button class="btn btn-primary" id="applyFilters" style="flex: 1;">Apply to All</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Export Settings -->
                 <div class="sidebar-section" id="exportSection" style="display: none;">
                     <div class="sidebar-title">Export Settings</div>
@@ -1116,6 +1155,12 @@
                             <div id="platformBadges" class="platform-badges"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Frame Inspector -->
+                <div class="sidebar-section" id="analyzerSection" style="display: none;">
+                    <div class="sidebar-title">Frame Inspector</div>
+                    <div id="analyzerContent" style="max-height: 200px; overflow-y: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.6;"></div>
                 </div>
             </aside>
 
@@ -2051,6 +2096,28 @@
                     this.showToast('Export cancelled', 'warning');
                 });
 
+                // Filters
+                const filterIds = ['filterBrightness', 'filterContrast', 'filterSaturate', 'filterHueRotate'];
+                const filterUnits = ['%', '%', '%', '°'];
+                filterIds.forEach((id, i) => {
+                    document.getElementById(id).addEventListener('input', (e) => {
+                        document.getElementById(id + 'Val').textContent = e.target.value + filterUnits[i];
+                        this.previewFilters();
+                    });
+                });
+                document.getElementById('resetFilters').addEventListener('click', () => {
+                    document.getElementById('filterBrightness').value = 100;
+                    document.getElementById('filterContrast').value = 100;
+                    document.getElementById('filterSaturate').value = 100;
+                    document.getElementById('filterHueRotate').value = 0;
+                    document.getElementById('filterBrightnessVal').textContent = '100%';
+                    document.getElementById('filterContrastVal').textContent = '100%';
+                    document.getElementById('filterSaturateVal').textContent = '100%';
+                    document.getElementById('filterHueRotateVal').textContent = '0°';
+                    this.renderFrame();
+                });
+                document.getElementById('applyFilters').addEventListener('click', () => this.applyFilters());
+
                 this.initCropInteraction();
 
                 const sidebar = document.getElementById('sidebar');
@@ -2101,6 +2168,16 @@
                     if (gifW > 4096 || gifH > 4096) {
                         this.showToast(`Warning: large dimensions ${gifW}×${gifH} — performance may be slow`, 'warning');
                     }
+
+                    this.rawGifMeta = gif.frames.map((f, i) => ({
+                        index: i + 1,
+                        left: f.left, top: f.top, width: f.width, height: f.height,
+                        interlaced: f.interlaced,
+                        paletteSize: f.colorTable ? f.colorTable.length : 0,
+                        delay: f.graphicControl ? f.graphicControl.delay : 0,
+                        disposal: f.graphicControl ? f.graphicControl.disposalMethod : 0,
+                        transparent: f.graphicControl ? f.graphicControl.transparentFlag : 0
+                    }));
 
                     const frames = GifDecoder.decompressFrames(gif, true);
 
@@ -2218,13 +2295,16 @@
                 document.getElementById('resizeSection').style.display = 'block';
                 document.getElementById('timingSection').style.display = 'block';
                 document.getElementById('speedSection').style.display = 'block';
+                document.getElementById('filtersSection').style.display = 'block';
                 document.getElementById('exportSection').style.display = 'block';
+                document.getElementById('analyzerSection').style.display = 'block';
 
                 // Enable export
                 document.getElementById('exportBtn').disabled = false;
 
                 // Update UI
                 this.updateGIFInfo();
+                this.updateAnalyzer();
                 this.updateResizeInputs();
                 this.updateCropInputs();
                 this.renderTimeline();
@@ -2814,6 +2894,64 @@
             }
 
             // ============================================
+            // Filters
+            // ============================================
+
+            getFilterString() {
+                const b = document.getElementById('filterBrightness').value;
+                const c = document.getElementById('filterContrast').value;
+                const s = document.getElementById('filterSaturate').value;
+                const h = document.getElementById('filterHueRotate').value;
+                if (b == 100 && c == 100 && s == 100 && h == 0) return '';
+                return `brightness(${b}%) contrast(${c}%) saturate(${s}%) hue-rotate(${h}deg)`;
+            }
+
+            previewFilters() {
+                if (this.frames.length === 0) return;
+                const filterStr = this.getFilterString();
+                const frame = this.frames[this.currentFrame];
+                this.canvas.width = this.originalWidth;
+                this.canvas.height = this.originalHeight;
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.filter = filterStr || 'none';
+                this.ctx.drawImage(frame.canvas, 0, 0);
+                this.ctx.filter = 'none';
+                this.canvas.style.width = (this.originalWidth * this.zoom) + 'px';
+                this.canvas.style.height = (this.originalHeight * this.zoom) + 'px';
+            }
+
+            applyFilters() {
+                if (this.frames.length === 0) return;
+                const filterStr = this.getFilterString();
+                if (!filterStr) {
+                    this.showToast('No filter changes to apply', 'warning');
+                    return;
+                }
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = frame.canvas.width;
+                    newCanvas.height = frame.canvas.height;
+                    const ctx = newCanvas.getContext('2d');
+                    ctx.filter = filterStr;
+                    ctx.drawImage(frame.canvas, 0, 0);
+                    ctx.filter = 'none';
+                    this.releaseCanvas(frame.canvas);
+                    frame.canvas = newCanvas;
+                });
+                document.getElementById('filterBrightness').value = 100;
+                document.getElementById('filterContrast').value = 100;
+                document.getElementById('filterSaturate').value = 100;
+                document.getElementById('filterHueRotate').value = 0;
+                document.getElementById('filterBrightnessVal').textContent = '100%';
+                document.getElementById('filterContrastVal').textContent = '100%';
+                document.getElementById('filterSaturateVal').textContent = '100%';
+                document.getElementById('filterHueRotateVal').textContent = '0°';
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Filters applied to all frames', 'success');
+            }
+
+            // ============================================
             // Zoom
             // ============================================
 
@@ -2968,6 +3106,24 @@
                 document.getElementById('infoDuration').textContent = (totalDuration / 1000).toFixed(2) + 's';
                 document.getElementById('infoSize').textContent = this.formatBytes(this.fileSize);
                 this.updateSizeEstimate();
+            }
+
+            updateAnalyzer() {
+                const el = document.getElementById('analyzerContent');
+                if (!el || !this.rawGifMeta) return;
+                const disposalNames = ['none', 'keep', 'bg', 'prev'];
+                const rows = this.rawGifMeta.map(f =>
+                    `<div style="display:flex; gap:8px; color:var(--text-secondary); padding:2px 0; border-bottom:1px solid var(--border-subtle);">` +
+                    `<span style="color:var(--text-primary); min-width:24px;">#${f.index}</span>` +
+                    `<span>${f.width}×${f.height}</span>` +
+                    `<span>+${f.left},${f.top}</span>` +
+                    `<span>${f.delay * 10}ms</span>` +
+                    `<span>${disposalNames[f.disposal] || f.disposal}</span>` +
+                    `<span>${f.paletteSize}c</span>` +
+                    (f.transparent ? `<span style="color:var(--accent-primary);">T</span>` : '') +
+                    `</div>`
+                ).join('');
+                el.innerHTML = rows;
             }
 
             updateSizeEstimate() {
