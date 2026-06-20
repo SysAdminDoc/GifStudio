@@ -2235,36 +2235,47 @@
 
                 try {
                     const buffer = await file.arrayBuffer();
-                    const gif = GifDecoder.parseGIF(buffer);
+                    let usedNativeDecoder = false;
 
-                    const gifW = gif.width, gifH = gif.height;
-                    if (gifW > 8192 || gifH > 8192) {
-                        throw new Error(`GIF dimensions ${gifW}×${gifH} exceed the 8192×8192 maximum`);
+                    if (typeof ImageDecoder !== 'undefined') {
+                        try {
+                            usedNativeDecoder = await this.decodeWithImageDecoder(buffer);
+                        } catch {
+                            usedNativeDecoder = false;
+                        }
                     }
-                    if (gifW > 4096 || gifH > 4096) {
-                        this.showToast(`Warning: large dimensions ${gifW}×${gifH} — performance may be slow`, 'warning');
+
+                    if (!usedNativeDecoder) {
+                        const gif = GifDecoder.parseGIF(buffer);
+                        const gifW = gif.width, gifH = gif.height;
+                        if (gifW > 8192 || gifH > 8192) {
+                            throw new Error(`GIF dimensions ${gifW}×${gifH} exceed the 8192×8192 maximum`);
+                        }
+                        if (gifW > 4096 || gifH > 4096) {
+                            this.showToast(`Warning: large dimensions ${gifW}×${gifH} — performance may be slow`, 'warning');
+                        }
+
+                        this.rawGifMeta = gif.frames.map((f, i) => ({
+                            index: i + 1,
+                            left: f.left, top: f.top, width: f.width, height: f.height,
+                            interlaced: f.interlaced,
+                            paletteSize: f.colorTable ? f.colorTable.length : 0,
+                            delay: f.graphicControl ? f.graphicControl.delay : 0,
+                            disposal: f.graphicControl ? f.graphicControl.disposalMethod : 0,
+                            transparent: f.graphicControl ? f.graphicControl.transparentFlag : 0
+                        }));
+
+                        const frames = GifDecoder.decompressFrames(gif, true);
+                        if (frames.length === 0) throw new Error('No frames found in GIF');
+                        if (frames.length > 500) {
+                            this.showToast(`Warning: ${frames.length} frames — this may be slow to edit`, 'warning');
+                        }
+                        this.loadFrames(frames);
                     }
 
-                    this.rawGifMeta = gif.frames.map((f, i) => ({
-                        index: i + 1,
-                        left: f.left, top: f.top, width: f.width, height: f.height,
-                        interlaced: f.interlaced,
-                        paletteSize: f.colorTable ? f.colorTable.length : 0,
-                        delay: f.graphicControl ? f.graphicControl.delay : 0,
-                        disposal: f.graphicControl ? f.graphicControl.disposalMethod : 0,
-                        transparent: f.graphicControl ? f.graphicControl.transparentFlag : 0
-                    }));
-
-                    const frames = GifDecoder.decompressFrames(gif, true);
-
-                    if (frames.length === 0) {
+                    if (this.frames.length === 0) {
                         throw new Error('No frames found in GIF');
                     }
-                    if (frames.length > 500) {
-                        this.showToast(`Warning: ${frames.length} frames — this may be slow to edit`, 'warning');
-                    }
-
-                    this.loadFrames(frames);
                     this.showEditor();
                     this.showToast(`Loaded ${frames.length} frames`, 'success');
 
@@ -2276,6 +2287,38 @@
                     document.getElementById('dropText').style.display = '';
                     document.getElementById('parseSpinner').style.display = 'none';
                 }
+            }
+
+            async decodeWithImageDecoder(buffer) {
+                const decoder = new ImageDecoder({ data: buffer, type: 'image/gif' });
+                await decoder.tracks.ready;
+                const track = decoder.tracks.selectedTrack;
+                if (!track || track.frameCount === 0) return null;
+
+                const frameCount = track.frameCount;
+                this.rawGifMeta = null;
+                this.frames = [];
+
+                for (let i = 0; i < frameCount; i++) {
+                    const result = await decoder.decode({ frameIndex: i, completeFramesOnly: true });
+                    const vf = result.image;
+                    const c = document.createElement('canvas');
+                    c.width = vf.displayWidth;
+                    c.height = vf.displayHeight;
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(vf, 0, 0);
+                    const delayMs = Math.round((vf.duration || 100000) / 1000);
+                    vf.close();
+                    this.frames.push({ canvas: c, delay: delayMs || 100, disposalType: 0 });
+                }
+                decoder.close();
+
+                if (this.frames.length > 0) {
+                    this.originalWidth = this.frames[0].canvas.width;
+                    this.originalHeight = this.frames[0].canvas.height;
+                }
+                this.currentFrame = 0;
+                return true;
             }
 
             async handleImageFiles(files) {
