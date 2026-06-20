@@ -1071,6 +1071,44 @@
                     </div>
                 </div>
 
+                <!-- Canvas Expand -->
+                <div class="sidebar-section" id="expandSection" style="display: none;">
+                    <div class="sidebar-title">Canvas Expand</div>
+                    <div class="tool-group">
+                        <div class="input-row">
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label" for="expandW">New Width</label>
+                                <input type="number" id="expandW" value="100" min="1">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label class="input-label" for="expandH">New Height</label>
+                                <input type="number" id="expandH" value="100" min="1">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="expandAnchor">Anchor</label>
+                            <select id="expandAnchor">
+                                <option value="center">Center</option>
+                                <option value="top-left">Top Left</option>
+                                <option value="top">Top Center</option>
+                                <option value="top-right">Top Right</option>
+                                <option value="left">Middle Left</option>
+                                <option value="right">Middle Right</option>
+                                <option value="bottom-left">Bottom Left</option>
+                                <option value="bottom">Bottom Center</option>
+                                <option value="bottom-right">Bottom Right</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="expandColor">Background</label>
+                            <input type="text" id="expandColor" value="#000000" placeholder="#hex or transparent">
+                        </div>
+                        <button class="btn btn-primary" id="applyExpand" style="width: 100%;">
+                            Expand Canvas
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Frame Timing -->
                 <div class="sidebar-section" id="timingSection" style="display: none;">
                     <div class="sidebar-title">Frame Timing</div>
@@ -2033,6 +2071,9 @@
                     document.getElementById('resizeH').value = h;
                 });
 
+                // Canvas expand
+                document.getElementById('applyExpand').addEventListener('click', () => this.applyCanvasExpand());
+
                 // Timing controls
                 document.getElementById('applyDelaySelected').addEventListener('click', () => this.applyDelayToSelected());
                 document.getElementById('applyDelayAll').addEventListener('click', () => this.applyDelayToAll());
@@ -2389,6 +2430,7 @@
                 document.getElementById('gifInfoSection').style.display = 'block';
                 document.getElementById('cropSection').style.display = 'block';
                 document.getElementById('resizeSection').style.display = 'block';
+                document.getElementById('expandSection').style.display = 'block';
                 document.getElementById('timingSection').style.display = 'block';
                 document.getElementById('speedSection').style.display = 'block';
                 document.getElementById('filtersSection').style.display = 'block';
@@ -2403,6 +2445,7 @@
                 this.updateGIFInfo();
                 this.updateAnalyzer();
                 this.updateResizeInputs();
+                this.updateExpandInputs();
                 this.updateCropInputs();
                 this.renderTimeline();
                 this.renderFrame();
@@ -2954,6 +2997,62 @@
                 this.renderFrame();
                 this.fitToView();
                 this.showToast(`Resized to ${newWidth}×${newHeight}`, 'success');
+            }
+
+            updateExpandInputs() {
+                document.getElementById('expandW').value = this.originalWidth;
+                document.getElementById('expandH').value = this.originalHeight;
+            }
+
+            applyCanvasExpand() {
+                if (this.frames.length === 0) return;
+
+                const newW = parseInt(document.getElementById('expandW').value) || this.originalWidth;
+                const newH = parseInt(document.getElementById('expandH').value) || this.originalHeight;
+
+                if (newW <= this.originalWidth && newH <= this.originalHeight) {
+                    this.showToast('New dimensions must be larger than current canvas', 'warning');
+                    return;
+                }
+                this.saveUndoState('Canvas expand');
+
+                const anchor = document.getElementById('expandAnchor').value;
+                const bgColor = document.getElementById('expandColor').value.trim();
+                const isTransparent = bgColor.toLowerCase() === 'transparent' || bgColor === '';
+
+                const oW = this.originalWidth, oH = this.originalHeight;
+                let ox = 0, oy = 0;
+                if (anchor.includes('right')) ox = newW - oW;
+                else if (!anchor.includes('left')) ox = Math.round((newW - oW) / 2);
+                if (anchor.includes('bottom')) oy = newH - oH;
+                else if (!anchor.includes('top')) oy = Math.round((newH - oH) / 2);
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = newW;
+                    newCanvas.height = newH;
+                    const ctx = newCanvas.getContext('2d');
+                    if (!isTransparent) {
+                        ctx.fillStyle = bgColor;
+                        ctx.fillRect(0, 0, newW, newH);
+                    }
+                    ctx.drawImage(frame.canvas, ox, oy);
+                    this.releaseCanvas(frame.canvas);
+                    frame.canvas = newCanvas;
+                });
+
+                this.originalWidth = newW;
+                this.originalHeight = newH;
+                this.cropRect = { x: 0, y: 0, w: newW, h: newH };
+
+                this.updateGIFInfo();
+                this.updateResizeInputs();
+                this.updateExpandInputs();
+                this.updateCropInputs();
+                this.renderTimeline();
+                this.renderFrame();
+                this.fitToView();
+                this.showToast(`Canvas expanded to ${newW}×${newH}`, 'success');
             }
 
             // ============================================
