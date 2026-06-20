@@ -37,7 +37,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 
 ### Privacy & Performance
 - **100% Client-Side** — Nothing is uploaded. All processing happens in your browser.
-- **Zero Install** — Single HTML file, no server, no build step
+- **Zero Install** — Single HTML file, no server, no build step. Installable as PWA when served over HTTP.
 - **Inline Codecs** — Self-contained GIF decoder + gifenc PNN encoder with no external dependencies
 - **Native Decoding** — Uses ImageDecoder API on Chrome/Firefox for faster GIF import; JS fallback on Safari
 - **Lazy Thumbnails** — Timeline uses IntersectionObserver + CSS content-visibility for smooth scrolling
