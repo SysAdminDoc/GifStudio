@@ -2023,15 +2023,15 @@
             }
 
             async checkSessionRecovery() {
+                let db;
                 try {
-                    const db = await this.openDB();
+                    db = await this.openDB();
                     const tx = db.transaction('session', 'readonly');
                     const req = tx.objectStore('session').get('current');
                     const session = await new Promise((resolve, reject) => {
                         req.onsuccess = () => resolve(req.result);
                         req.onerror = () => reject(req.error);
                     });
-                    db.close();
                     if (!session || !session.frames || session.frames.length === 0) return;
 
                     const age = Date.now() - (session.savedAt || 0);
@@ -2045,6 +2045,8 @@
                     this.showRecoveryBanner(session, timeAgo);
                 } catch (e) {
                     console.error('Session recovery check failed:', e);
+                } finally {
+                    if (db) try { db.close(); } catch {}
                 }
             }
 
@@ -2514,11 +2516,14 @@
                 const decoder = new ImageDecoder({ data: buffer, type: 'image/gif' });
                 await decoder.tracks.ready;
                 const track = decoder.tracks.selectedTrack;
-                if (!track || track.frameCount === 0) return null;
+                if (!track || track.frameCount === 0) {
+                    decoder.close();
+                    return false;
+                }
 
                 const frameCount = track.frameCount;
                 this.rawGifMeta = null;
-                this.frames = [];
+                const decodedFrames = [];
 
                 for (let i = 0; i < frameCount; i++) {
                     const result = await decoder.decode({ frameIndex: i, completeFramesOnly: true });
@@ -2530,14 +2535,14 @@
                     ctx.drawImage(vf, 0, 0);
                     const delayMs = Math.round((vf.duration || 100000) / 1000);
                     vf.close();
-                    this.frames.push({ canvas: c, delay: delayMs || 100, disposalType: 0 });
+                    decodedFrames.push({ canvas: c, delay: delayMs || 100, disposalType: 0 });
                 }
                 decoder.close();
 
-                if (this.frames.length > 0) {
-                    this.originalWidth = this.frames[0].canvas.width;
-                    this.originalHeight = this.frames[0].canvas.height;
-                }
+                if (decodedFrames.length === 0) return false;
+                this.frames = decodedFrames;
+                this.originalWidth = this.frames[0].canvas.width;
+                this.originalHeight = this.frames[0].canvas.height;
                 this.currentFrame = 0;
                 return true;
             }
@@ -2667,18 +2672,11 @@
             loadFrames(rawFrames) {
                 this.frames = [];
 
-                // Get GIF dimensions from first frame
-                const firstFrame = rawFrames[0];
-                this.originalWidth = firstFrame.dims.width;
-                this.originalHeight = firstFrame.dims.height;
-
-                // Find full canvas dimensions
                 let maxWidth = 0, maxHeight = 0;
                 rawFrames.forEach(f => {
                     maxWidth = Math.max(maxWidth, f.dims.left + f.dims.width);
                     maxHeight = Math.max(maxHeight, f.dims.top + f.dims.height);
                 });
-
                 this.originalWidth = maxWidth;
                 this.originalHeight = maxHeight;
 
@@ -3016,6 +3014,7 @@
                     disposalType: frame.disposalType
                 });
 
+                this.selectedFrames.clear();
                 this.renderTimeline();
                 this.goToFrame(this.currentFrame + 1);
                 this.showToast('Frame duplicated', 'success');
@@ -3080,6 +3079,7 @@
                     this.currentFrame++;
                 }
 
+                this.selectedFrames.clear();
                 this.renderTimeline();
                 this.renderFrame();
             }
@@ -3103,9 +3103,9 @@
             applyDelayToSelected() {
                 this.saveUndoState('Change frame delay');
                 const delay = parseInt(document.getElementById('frameDelay').value) || 100;
-                const targets = this.selectedFrames.size > 1
+                const targets = (this.selectedFrames.size > 1
                     ? [...this.selectedFrames]
-                    : [this.currentFrame];
+                    : [this.currentFrame]).filter(i => i < this.frames.length);
                 targets.forEach(i => { this.frames[i].delay = delay; });
                 this.renderTimeline();
                 this.renderFrame();
