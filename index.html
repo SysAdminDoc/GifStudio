@@ -599,6 +599,8 @@
             cursor: pointer;
             transition: all var(--transition-fast);
             position: relative;
+            content-visibility: auto;
+            contain-intrinsic-size: 80px 86px;
         }
 
         .frame-item:hover {
@@ -1037,6 +1039,18 @@
                 <div class="sidebar-section" id="resizeSection" style="display: none;">
                     <div class="sidebar-title">Resize</div>
                     <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label" for="resizePreset">Preset</label>
+                            <select id="resizePreset">
+                                <option value="">Custom</option>
+                                <option value="128x128">Discord Emoji (128x128)</option>
+                                <option value="512x512">Telegram Sticker (512x512)</option>
+                                <option value="480x480">Profile Avatar (480x480)</option>
+                                <option value="1280x720">Twitter/X (1280x720)</option>
+                                <option value="800x600">Standard 4:3 (800x600)</option>
+                                <option value="1920x1080">Full HD (1920x1080)</option>
+                            </select>
+                        </div>
                         <div class="input-row">
                             <div class="input-group" style="flex: 1;">
                                 <label class="input-label" for="resizeW">Width</label>
@@ -2011,6 +2025,13 @@
                 document.getElementById('applyResize').addEventListener('click', () => this.applyResize());
                 document.getElementById('resizeW').addEventListener('input', () => this.handleResizeInput('width'));
                 document.getElementById('resizeH').addEventListener('input', () => this.handleResizeInput('height'));
+                document.getElementById('resizePreset').addEventListener('change', (e) => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    const [w, h] = val.split('x').map(Number);
+                    document.getElementById('resizeW').value = w;
+                    document.getElementById('resizeH').value = h;
+                });
 
                 // Timing controls
                 document.getElementById('applyDelaySelected').addEventListener('click', () => this.applyDelayToSelected());
