@@ -1180,6 +1180,33 @@
                     </div>
                 </div>
 
+                <!-- Background Layer -->
+                <div class="sidebar-section" id="backgroundSection" style="display: none;">
+                    <div class="sidebar-title">Background Layer</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label" for="bgType">Type</label>
+                            <select id="bgType">
+                                <option value="none">None</option>
+                                <option value="color">Solid Color</option>
+                                <option value="image">Image</option>
+                            </select>
+                        </div>
+                        <div id="bgColorGroup" class="input-group" style="display:none;">
+                            <label class="input-label" for="bgColorPicker">Color</label>
+                            <input type="text" id="bgColorPicker" value="#000000" placeholder="#hex">
+                        </div>
+                        <div id="bgImageGroup" style="display:none;">
+                            <button class="btn btn-secondary" id="bgImageBtn" style="width:100%;">Choose Image</button>
+                            <input type="file" id="bgImageInput" accept="image/*" style="display:none;">
+                            <p id="bgImageName" style="font-size:11px; color:var(--text-muted); margin-top:4px;"></p>
+                        </div>
+                        <button class="btn btn-primary" id="applyBackground" style="width: 100%; margin-top: 4px;">
+                            Burn Background Into Frames
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Redaction Tool -->
                 <div class="sidebar-section" id="redactSection" style="display: none;">
                     <div class="sidebar-title">Redact / Pixelate</div>
@@ -2179,6 +2206,25 @@
                 });
                 document.getElementById('applyRedact').addEventListener('click', () => this.applyRedaction());
 
+                // Background layer
+                document.getElementById('bgType').addEventListener('change', (e) => {
+                    document.getElementById('bgColorGroup').style.display = e.target.value === 'color' ? '' : 'none';
+                    document.getElementById('bgImageGroup').style.display = e.target.value === 'image' ? '' : 'none';
+                });
+                document.getElementById('bgImageBtn').addEventListener('click', () => document.getElementById('bgImageInput').click());
+                document.getElementById('bgImageInput').addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const img = new Image();
+                    img.onload = () => {
+                        this._bgImage = img;
+                        document.getElementById('bgImageName').textContent = file.name;
+                        URL.revokeObjectURL(img.src);
+                    };
+                    img.src = URL.createObjectURL(file);
+                });
+                document.getElementById('applyBackground').addEventListener('click', () => this.applyBackgroundLayer());
+
                 // Optimize
                 document.getElementById('optimizeLossy').addEventListener('input', (e) => {
                     document.getElementById('optimizeLossyVal').textContent = e.target.value;
@@ -2526,6 +2572,7 @@
                 document.getElementById('speedSection').style.display = 'block';
                 document.getElementById('filtersSection').style.display = 'block';
                 document.getElementById('redactSection').style.display = 'block';
+                document.getElementById('backgroundSection').style.display = 'block';
                 document.getElementById('exportSection').style.display = 'block';
                 document.getElementById('optimizeSection').style.display = 'block';
                 document.getElementById('analyzerSection').style.display = 'block';
@@ -3355,6 +3402,42 @@
                 this.renderTimeline();
                 this.renderFrame();
                 this.showToast(`Redaction applied to ${targets.length} frame${targets.length > 1 ? 's' : ''}`, 'success');
+            }
+
+            applyBackgroundLayer() {
+                if (this.frames.length === 0) return;
+                const bgType = document.getElementById('bgType').value;
+                if (bgType === 'none') {
+                    this.showToast('Select a background type first', 'warning');
+                    return;
+                }
+
+                this.saveUndoState('Background layer');
+
+                this.frames.forEach(frame => {
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = frame.canvas.width;
+                    newCanvas.height = frame.canvas.height;
+                    const ctx = newCanvas.getContext('2d');
+
+                    if (bgType === 'color') {
+                        ctx.fillStyle = document.getElementById('bgColorPicker').value || '#000000';
+                        ctx.fillRect(0, 0, newCanvas.width, newCanvas.height);
+                    } else if (bgType === 'image' && this._bgImage) {
+                        const scale = Math.max(newCanvas.width / this._bgImage.naturalWidth, newCanvas.height / this._bgImage.naturalHeight);
+                        const w = this._bgImage.naturalWidth * scale;
+                        const h = this._bgImage.naturalHeight * scale;
+                        ctx.drawImage(this._bgImage, (newCanvas.width - w) / 2, (newCanvas.height - h) / 2, w, h);
+                    }
+
+                    ctx.drawImage(frame.canvas, 0, 0);
+                    this.releaseCanvas(frame.canvas);
+                    frame.canvas = newCanvas;
+                });
+
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast('Background applied to all frames', 'success');
             }
 
             // ============================================
