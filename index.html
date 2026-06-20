@@ -38,7 +38,7 @@
             --border-medium: #3f3f46;
             --text-primary: #fafafa;
             --text-secondary: #a1a1aa;
-            --text-muted: #71717a;
+            --text-muted: #8b8b94;
             --accent-primary: #22d3ee;
             --accent-secondary: #06b6d4;
             --accent-glow: rgba(34, 211, 238, 0.15);
@@ -195,7 +195,7 @@
 
         .btn-danger {
             background: var(--danger);
-            color: white;
+            color: var(--text-primary);
         }
         .btn-danger:hover {
             background: var(--danger-hover);
@@ -205,6 +205,17 @@
             width: 36px;
             height: 36px;
             padding: 0;
+        }
+
+        .btn:active {
+            transform: scale(0.97);
+        }
+
+        .btn:disabled,
+        .tool-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
         }
 
         .btn:focus-visible,
@@ -399,10 +410,15 @@
             color: var(--text-primary);
         }
 
-        .tool-btn.active {
+        .tool-btn.active,
+        .playback-mode-btn.active {
             background: var(--accent-glow);
             border-color: var(--accent-primary);
             color: var(--accent-primary);
+        }
+
+        .tool-btn:active:not(:disabled) {
+            transform: scale(0.93);
         }
 
         .toolbar-divider {
@@ -507,7 +523,7 @@
             width: 88px;
             height: 88px;
             border: 2px dashed var(--border-medium);
-            border-radius: 20px;
+            border-radius: var(--radius-lg);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -817,9 +833,10 @@
 
         /* Reduced motion */
         @media (prefers-reduced-motion: reduce) {
-            .toast { animation: none; }
-            .modal-overlay .modal { transition: none; transform: scale(1); }
-            .btn-primary:hover { transform: none; }
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
         /* Empty State */
@@ -932,21 +949,25 @@
             .sidebar.open {
                 transform: translateX(0);
             }
-            .sidebar-overlay {
-                position: fixed;
-                inset: 0;
-                background: rgba(0,0,0,0.5);
-                z-index: 199;
-                opacity: 0;
-                pointer-events: none;
-                transition: opacity var(--transition-normal);
-            }
-            .sidebar-overlay.active {
-                opacity: 1;
-                pointer-events: auto;
-            }
             .header {
                 padding: 10px 12px;
+            }
+            .sidebar {
+                max-width: 85vw;
+            }
+            .canvas-toolbar {
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+            .canvas-container {
+                padding: 16px;
+            }
+            .timeline-header {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .btn, .tool-btn {
+                min-height: 40px;
             }
         }
     </style>
@@ -1585,7 +1606,7 @@
         function readSubBlocks(st) {
             const blocks = [];
             let size;
-            while ((size = st.readByte()) !== 0) {
+            while (st.pos < st.data.length && (size = st.readByte()) !== 0) {
                 blocks.push(st.readBytes(size));
             }
             // Flatten
@@ -1630,9 +1651,9 @@
             }
 
             let code;
-            while (true) {
+            while (pixelPos < pixelCount) {
                 code = readCode();
-                if (code === eoiCode) break;
+                if (code === eoiCode || dataPos >= data.length && bufBits < codeSize) break;
                 if (code === clearCode) {
                     initTable();
                     prevCode = -1;
@@ -1977,6 +1998,7 @@
                     const frameData = [];
                     for (const frame of this.frames) {
                         const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
+                        if (!blob) continue;
                         const buf = await blob.arrayBuffer();
                         frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
                     }
@@ -2416,6 +2438,8 @@
                     return;
                 }
 
+                this.stopPlayback();
+                this.selectedFrames.clear();
                 this.fileSize = file.size;
                 this.clearUndoHistory();
 
@@ -2474,7 +2498,7 @@
                     }
                     this.showEditor();
                     this.scheduleAutosave();
-                    this.showToast(`Loaded ${frames.length} frames`, 'success');
+                    this.showToast(`Loaded ${this.frames.length} frames`, 'success');
 
                 } catch (error) {
                     console.error('Error loading GIF:', error);
@@ -2912,12 +2936,15 @@
 
             playNextFrame() {
                 if (!this.isPlaying) return;
+                if (this.frames.length < 2) { this.stopPlayback(); return; }
 
                 const frame = this.frames[this.currentFrame];
+                if (!frame) { this.stopPlayback(); return; }
                 const delay = frame.delay / this.playbackSpeed;
 
                 this.playInterval = setTimeout(() => {
                     const len = this.frames.length;
+                    if (len < 2) { this.stopPlayback(); return; }
                     if (this.playbackMode === 'normal') {
                         this.currentFrame = (this.currentFrame + 1) % len;
                     } else if (this.playbackMode === 'pingpong') {
@@ -2957,12 +2984,13 @@
             }
 
             goToFrame(index) {
+                if (this.frames.length === 0) return;
                 if (index < 0) index = this.frames.length - 1;
                 if (index >= this.frames.length) index = 0;
-                
+
                 this.currentFrame = index;
                 this.renderFrame();
-                
+
                 // Update delay input
                 document.getElementById('frameDelay').value = this.frames[index].delay;
             }
@@ -2973,6 +3001,7 @@
 
             duplicateFrame() {
                 if (this.frames.length === 0) return;
+                this.stopPlayback();
                 this.saveUndoState('Duplicate frame');
 
                 const frame = this.frames[this.currentFrame];
@@ -2993,6 +3022,7 @@
             }
 
             deleteFrame() {
+                this.stopPlayback();
                 if (this.selectedFrames.size > 1) {
                     const indices = [...this.selectedFrames].sort((a, b) => b - a);
                     if (indices.length >= this.frames.length) {
@@ -3036,6 +3066,7 @@
             }
 
             reorderFrame(fromIndex, toIndex) {
+                this.stopPlayback();
                 this.saveUndoState('Reorder frame');
                 const [frame] = this.frames.splice(fromIndex, 1);
                 this.frames.splice(toIndex, 0, frame);
@@ -3055,6 +3086,7 @@
 
             reverseFrames() {
                 if (this.frames.length < 2) return;
+                this.stopPlayback();
                 this.saveUndoState('Reverse frames');
 
                 this.frames.reverse();
@@ -3210,8 +3242,9 @@
                 if (this.frames.length === 0) return;
                 this.saveUndoState('Crop');
 
-                const { x, y, w, h } = this.cropRect;
-                
+                const x = Math.round(this.cropRect.x), y = Math.round(this.cropRect.y);
+                const w = Math.round(this.cropRect.w), h = Math.round(this.cropRect.h);
+
                 this.frames.forEach(frame => {
                     const newCanvas = document.createElement('canvas');
                     newCanvas.width = w;
@@ -3246,6 +3279,7 @@
 
             handleResizeInput(dimension) {
                 if (!document.getElementById('lockAspect').checked) return;
+                if (!this.originalWidth || !this.originalHeight) return;
 
                 const aspect = this.originalWidth / this.originalHeight;
                 
@@ -3645,6 +3679,7 @@
 
             async exportGIF() {
                 if (this.frames.length === 0) return;
+                this.stopPlayback();
 
                 const modal = document.getElementById('exportModal');
                 const progress = document.getElementById('exportProgress');
