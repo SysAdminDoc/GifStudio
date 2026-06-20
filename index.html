@@ -1696,16 +1696,18 @@
     const gifuct = GifDecoder;
     </script>
 
-    <!-- Inline GIF Encoder (replaces gif.js) -->
+    <!-- Inline GIF Encoder — gifenc v1.0.3 (MIT, mattdesl) wrapped for GifStudio -->
     <script>
+    // gifenc core — PNN quantizer, LZW encoder, GIF89a writer
+    var X={signature:"GIF",version:"89a",trailer:59,extensionIntroducer:33,applicationExtensionLabel:255,graphicControlExtensionLabel:249,imageSeparator:44,signatureSize:3,versionSize:3,globalColorTableFlagMask:128,colorResolutionMask:112,sortFlagMask:8,globalColorTableSizeMask:7,applicationIdentifierSize:8,applicationAuthCodeSize:3,disposalMethodMask:28,userInputFlagMask:2,transparentColorFlagMask:1,localColorTableFlagMask:128,interlaceFlagMask:64,idSortFlagMask:32,localColorTableSizeMask:7};function F(t=256){let e=0,s=new Uint8Array(t);return{get buffer(){return s.buffer},reset(){e=0},bytesView(){return s.subarray(0,e)},bytes(){return s.slice(0,e)},writeByte(r){n(e+1),s[e]=r,e++},writeBytes(r,o=0,i=r.length){n(e+i);for(let c=0;c<i;c++)s[e++]=r[c+o]},writeBytesView(r,o=0,i=r.byteLength){n(e+i),s.set(r.subarray(o,o+i),e),e+=i}};function n(r){var o=s.length;if(o>=r)return;var i=1024*1024;r=Math.max(r,o*(o<i?2:1.125)>>>0),o!=0&&(r=Math.max(r,256));let c=s;s=new Uint8Array(r),e>0&&s.set(c.subarray(0,e),0)}}var O=12,J=5003,lt=[0,1,3,7,15,31,63,127,255,511,1023,2047,4095,8191,16383,32767,65535];function at(t,e,s,n,r=F(512),o=new Uint8Array(256),i=new Int32Array(J),c=new Int32Array(J)){let x=i.length,a=Math.max(2,n);o.fill(0),c.fill(0),i.fill(-1);let l=0,f=0,g=a+1,h=g,b=!1,w=h,_=(1<<w)-1,u=1<<g-1,k=u+1,B=u+2,p=0,A=s[0],z=0;for(let y=x;y<65536;y*=2)++z;z=8-z,r.writeByte(a),I(u);let d=s.length;for(let y=1;y<d;y++){t:{let m=s[y],v=(m<<O)+A,M=m<<z^A;if(i[M]===v){A=c[M];break t}let V=M===0?1:x-M;for(;i[M]>=0;)if(M-=V,M<0&&(M+=x),i[M]===v){A=c[M];break t}I(A),A=m,B<1<<O?(c[M]=B++,i[M]=v):(i.fill(-1),B=u+2,b=!0,I(u))}}return I(A),I(k),r.writeByte(0),r.bytesView();function I(y){for(l&=lt[f],f>0?l|=y<<f:l=y,f+=w;f>=8;)o[p++]=l&255,p>=254&&(r.writeByte(p),r.writeBytesView(o,0,p),p=0),l>>=8,f-=8;if((B>_||b)&&(b?(w=h,_=(1<<w)-1,b=!1):(++w,_=w===O?1<<w:(1<<w)-1)),y==k){for(;f>0;)o[p++]=l&255,p>=254&&(r.writeByte(p),r.writeBytesView(o,0,p),p=0),l>>=8,f-=8;p>0&&(r.writeByte(p),r.writeBytesView(o,0,p),p=0)}}}var $=at;function D(t,e,s){return t<<8&63488|e<<2&992|s>>3}function G(t,e,s,n){return t>>4|e&240|(s&240)<<4|(n&240)<<8}function j(t,e,s){return t>>4<<8|e&240|s>>4}function R(t,e,s){return t<e?e:t>s?s:t}function T(t){return t*t}function tt(t,e,s){var n=0,r=1e100;let o=t[e],i=o.cnt,c=o.ac,x=o.rc,a=o.gc,l=o.bc;for(var f=o.fw;f!=0;f=t[f].fw){let h=t[f],b=h.cnt,w=i*b/(i+b);if(!(w>=r)){var g=0;s&&(g+=w*T(h.ac-c),g>=r)||(g+=w*T(h.rc-x),!(g>=r)&&(g+=w*T(h.gc-a),!(g>=r)&&(g+=w*T(h.bc-l),!(g>=r)&&(r=g,n=f))))}}o.err=r,o.nn=n}function Q(){return{ac:0,rc:0,gc:0,bc:0,cnt:0,nn:0,fw:0,bk:0,tm:0,mtm:0,err:0}}function ut(t,e){let s=e==="rgb444"?4096:65536,n=new Array(s),r=t.length;if(e==="rgba4444")for(let o=0;o<r;++o){let i=t[o],c=i>>24&255,x=i>>16&255,a=i>>8&255,l=i&255,f=G(l,a,x,c),g=f in n?n[f]:n[f]=Q();g.rc+=l,g.gc+=a,g.bc+=x,g.ac+=c,g.cnt++}else if(e==="rgb444")for(let o=0;o<r;++o){let i=t[o],c=i>>16&255,x=i>>8&255,a=i&255,l=j(a,x,c),f=l in n?n[l]:n[l]=Q();f.rc+=a,f.gc+=x,f.bc+=c,f.cnt++}else for(let o=0;o<r;++o){let i=t[o],c=i>>16&255,x=i>>8&255,a=i&255,l=D(a,x,c),f=l in n?n[l]:n[l]=Q();f.rc+=a,f.gc+=x,f.bc+=c,f.cnt++}return n}function H(t,e,s={}){let{format:n="rgb565",clearAlpha:r=!0,clearAlphaColor:o=0,clearAlphaThreshold:i=0,oneBitAlpha:c=!1}=s;if(!t||!t.buffer)throw new Error("quantize() expected RGBA Uint8Array data");if(!(t instanceof Uint8Array)&&!(t instanceof Uint8ClampedArray))throw new Error("quantize() expected RGBA Uint8Array data");let x=new Uint32Array(t.buffer),a=s.useSqrt!==!1,l=n==="rgba4444",f=ut(x,n),g=f.length,h=g-1,b=new Uint32Array(g+1);for(var w=0,u=0;u<g;++u){let C=f[u];if(C!=null){var _=1/C.cnt;l&&(C.ac*=_),C.rc*=_,C.gc*=_,C.bc*=_,f[w++]=C}}T(e)/w<.022&&(a=!1);for(var u=0;u<w-1;++u)f[u].fw=u+1,f[u+1].bk=u,a&&(f[u].cnt=Math.sqrt(f[u].cnt));a&&(f[u].cnt=Math.sqrt(f[u].cnt));var k,B,p;for(u=0;u<w;++u){tt(f,u,!1);var A=f[u].err;for(B=++b[0];B>1&&(p=B>>1,!(f[k=b[p]].err<=A));B=p)b[B]=k;b[B]=u}var z=w-e;for(u=0;u<z;){for(var d;;){var I=b[1];if(d=f[I],d.tm>=d.mtm&&f[d.nn].mtm<=d.tm)break;d.mtm==h?I=b[1]=b[b[0]--]:(tt(f,I,!1),d.tm=u);var A=f[I].err;for(B=1;(p=B+B)<=b[0]&&(p<b[0]&&f[b[p]].err>f[b[p+1]].err&&p++,!(A<=f[k=b[p]].err));B=p)b[B]=k;b[B]=I}var y=f[d.nn],m=d.cnt,v=y.cnt,_=1/(m+v);l&&(d.ac=_*(m*d.ac+v*y.ac)),d.rc=_*(m*d.rc+v*y.rc),d.gc=_*(m*d.gc+v*y.gc),d.bc=_*(m*d.bc+v*y.bc),d.cnt+=y.cnt,d.mtm=++u,f[y.bk].fw=y.fw,f[y.fw].bk=y.bk,y.mtm=h}let M=[];var V=0;for(u=0;;++V){let L=R(Math.round(f[u].rc),0,255),C=R(Math.round(f[u].gc),0,255),Y=R(Math.round(f[u].bc),0,255),E=255;if(l){if(E=R(Math.round(f[u].ac),0,255),c){let st=typeof c=="number"?c:127;E=E<=st?0:255}r&&E<=i&&(L=C=Y=o,E=0)}let K=l?[L,C,Y,E]:[L,C,Y];if(xt(M,K)||M.push(K),(u=f[u].fw)==0)break}return M}function xt(t,e){for(let s=0;s<t.length;s++){let n=t[s],r=n[0]===e[0]&&n[1]===e[1]&&n[2]===e[2],o=n.length>=4&&e.length>=4?n[3]===e[3]:!0;if(r&&o)return!0}return!1}function U(t,e){var s=0,n;for(n=0;n<t.length;n++){let r=t[n]-e[n];s+=r*r}return s}function P(t,e){return e>1?Math.round(t/e)*e:t}function et(t,{roundRGB:e=5,roundAlpha:s=10,oneBitAlpha:n=null}={}){let r=new Uint32Array(t.buffer);for(let o=0;o<r.length;o++){let i=r[o],c=i>>24&255,x=i>>16&255,a=i>>8&255,l=i&255;if(c=P(c,s),n){let f=typeof n=="number"?n:127;c=c<=f?0:255}l=P(l,e),a=P(a,e),x=P(x,e),r[o]=c<<24|x<<16|a<<8|l<<0}}function nt(t,e,s="rgb565"){if(!t||!t.buffer)throw new Error("quantize() expected RGBA Uint8Array data");if(!(t instanceof Uint8Array)&&!(t instanceof Uint8ClampedArray))throw new Error("quantize() expected RGBA Uint8Array data");if(e.length>256)throw new Error("applyPalette() only works with 256 colors or less");let n=new Uint32Array(t.buffer),r=n.length,o=s==="rgb444"?4096:65536,i=new Uint8Array(r),c=new Array(o),x=s==="rgba4444";if(s==="rgba4444")for(let a=0;a<r;a++){let l=n[a],f=l>>24&255,g=l>>16&255,h=l>>8&255,b=l&255,w=G(b,h,g,f),_=w in c?c[w]:c[w]=gt(b,h,g,f,e);i[a]=_}else{let a=s==="rgb444"?j:D;for(let l=0;l<r;l++){let f=n[l],g=f>>16&255,h=f>>8&255,b=f&255,w=a(b,h,g),_=w in c?c[w]:c[w]=bt(b,h,g,e);i[l]=_}}return i}function gt(t,e,s,n,r){let o=0,i=1e100;for(let c=0;c<r.length;c++){let x=r[c],a=x[3],l=q(a-n);if(l>i)continue;let f=x[0];if(l+=q(f-t),l>i)continue;let g=x[1];if(l+=q(g-e),l>i)continue;let h=x[2];l+=q(h-s),!(l>i)&&(i=l,o=c)}return o}function bt(t,e,s,n){let r=0,o=1e100;for(let i=0;i<n.length;i++){let c=n[i],x=c[0],a=q(x-t);if(a>o)continue;let l=c[1];if(a+=q(l-e),a>o)continue;let f=c[2];a+=q(f-s),!(a>o)&&(o=a,r=i)}return r}function rt(t,e,s=5){if(!t.length||!e.length)return;let n=t.map(i=>i.slice(0,3)),r=s*s,o=t[0].length;for(let i=0;i<e.length;i++){let c=e[i];c.length<o?c=[c[0],c[1],c[2],255]:c.length>o?c=c.slice(0,3):c=c.slice();let x=N(n,c.slice(0,3),U),a=x[0],l=x[1];l>0&&l<=r&&(t[a]=c)}}function q(t){return t*t}function W(t,e,s=U){let n=Infinity,r=-1;for(let o=0;o<t.length;o++){let i=t[o],c=s(e,i);c<n&&(n=c,r=o)}return r}function N(t,e,s=U){let n=Infinity,r=-1;for(let o=0;o<t.length;o++){let i=t[o],c=s(e,i);c<n&&(n=c,r=o)}return[r,n]}function ot(t,e,s=U){return t[W(t,e,s)]}function ct(t={}){let{initialCapacity:e=4096,auto:s=!0}=t,n=F(e),r=5003,o=new Uint8Array(256),i=new Int32Array(r),c=new Int32Array(r),x=!1;return{reset(){n.reset(),x=!1},finish(){n.writeByte(X.trailer)},bytes(){return n.bytes()},bytesView(){return n.bytesView()},get buffer(){return n.buffer},get stream(){return n},writeHeader:a,writeFrame(l,f,g,h={}){let{transparent:b=!1,transparentIndex:w=0,delay:_=0,palette:u=null,repeat:k=0,colorDepth:B=8,dispose:p=-1}=h,A=!1;if(s?x||(A=!0,a(),x=!0):A=Boolean(h.first),f=Math.max(0,Math.floor(f)),g=Math.max(0,Math.floor(g)),A){if(!u)throw new Error("First frame must include a { palette } option");pt(n,f,g,u,B),it(n,u),k>=0&&dt(n,k)}let z=Math.round(_/10);wt(n,p,z,b,w);let d=Boolean(u)&&!A;ht(n,f,g,d?u:null),d&&it(n,u),yt(n,l,f,g,B,o,i,c)}};function a(){ft(n,"GIF89a")}}function wt(t,e,s,n,r){t.writeByte(33),t.writeByte(249),t.writeByte(4),r<0&&(r=0,n=!1);var o,i;n?(o=1,i=2):(o=0,i=0),e>=0&&(i=e&7),i<<=2;let c=0;t.writeByte(0|i|c|o),S(t,s),t.writeByte(r||0),t.writeByte(0)}function pt(t,e,s,n,r=8){let o=1,i=0,c=Z(n.length)-1,x=o<<7|r-1<<4|i<<3|c,a=0,l=0;S(t,e),S(t,s),t.writeBytes([x,a,l])}function dt(t,e){t.writeByte(33),t.writeByte(255),t.writeByte(11),ft(t,"NETSCAPE2.0"),t.writeByte(3),t.writeByte(1),S(t,e),t.writeByte(0)}function it(t,e){let s=1<<Z(e.length);for(let n=0;n<s;n++){let r=[0,0,0];n<e.length&&(r=e[n]),t.writeByte(r[0]),t.writeByte(r[1]),t.writeByte(r[2])}}function ht(t,e,s,n){if(t.writeByte(44),S(t,0),S(t,0),S(t,e),S(t,s),n){let r=0,o=0,i=Z(n.length)-1;t.writeByte(128|r|o|0|i)}else t.writeByte(0)}function yt(t,e,s,n,r=8,o,i,c){$(s,n,e,r,t,o,i,c)}function S(t,e){t.writeByte(e&255),t.writeByte(e>>8&255)}function ft(t,e){for(var s=0;s<e.length;s++)t.writeByte(e.charCodeAt(s))}function Z(t){return Math.max(Math.ceil(Math.log2(t)),1)}
+    const gifenc = { GIFEncoder: ct, quantize: H, applyPalette: nt, prequantize: et, nearestColorIndex: W };
+
     class GifEncoder {
         constructor(width, height, opts = {}) {
             this.width = width;
             this.height = height;
-            this.quality = opts.quality || 10;
-            this.dither = opts.dither || false;
             this.repeat = opts.repeat != null ? opts.repeat : 0;
-            this.maxColors = opts.maxColors || 256;
+            this.maxColors = Math.min(256, Math.max(2, opts.maxColors || 256));
             this.frames = [];
             this.aborted = false;
         }
@@ -1723,253 +1725,15 @@
                 this.aborted = false;
                 const frames = this.frames;
                 const w = this.width, h = this.height;
-                const repeat = this.repeat;
-                const doDither = this.dither && this.dither !== 'none';
-
-                // Output byte array
-                const output = [];
-
-                // Helper: write bytes
-                const wb = (b) => output.push(b & 0xFF);
-                const wBytes = (arr) => arr.forEach(b => output.push(b & 0xFF));
-                const wUint16LE = (v) => { wb(v & 0xFF); wb((v >> 8) & 0xFF); };
-                const wString = (s) => { for (let i = 0; i < s.length; i++) wb(s.charCodeAt(i)); };
-
-                // --- PnnQuant2 Color Quantizer ---
-                function quantize(rgba, maxColors) {
-                    // Build histogram using RGB555 bins (5 bits per channel)
-                    const hist = new Map();
-                    const n = rgba.length >> 2;
-                    for (let i = 0; i < n; i++) {
-                        const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2], a = rgba[i*4+3];
-                        if (a < 128) continue;
-                        const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-                        const entry = hist.get(key);
-                        if (entry) {
-                            entry[0] += r; entry[1] += g; entry[2] += b; entry[3]++;
-                        } else {
-                            hist.set(key, [r, g, b, 1]);
-                        }
-                    }
-
-                    // Convert to array of bins: {r, g, b, count}
-                    let bins = [];
-                    for (const [, v] of hist) {
-                        bins.push({ r: v[0]/v[3], g: v[1]/v[3], b: v[2]/v[3], count: v[3] });
-                    }
-
-                    if (bins.length === 0) {
-                        return new Uint8Array([0,0,0]);
-                    }
-
-                    // Merge bins until we have maxColors
-                    while (bins.length > maxColors) {
-                        // Find two closest bins by weighted color distance
-                        let minDist = Infinity, minI = 0, minJ = 1;
-                        // For speed, only compare adjacent after sorting by luminance
-                        bins.sort((a, b) => (0.299*a.r + 0.587*a.g + 0.114*a.b) - (0.299*b.r + 0.587*b.g + 0.114*b.b));
-                        for (let i = 0; i < Math.min(bins.length - 1, 64); i++) {
-                            const a = bins[i], b = bins[i+1];
-                            const dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
-                            const d = dr*dr + dg*dg + db*db;
-                            if (d < minDist) { minDist = d; minI = i; minJ = i+1; }
-                        }
-                        const a = bins[minI], b = bins[minJ];
-                        const total = a.count + b.count;
-                        bins[minI] = {
-                            r: (a.r * a.count + b.r * b.count) / total,
-                            g: (a.g * a.count + b.g * b.count) / total,
-                            b: (a.b * a.count + b.b * b.count) / total,
-                            count: total
-                        };
-                        bins.splice(minJ, 1);
-                    }
-
-                    // Build palette (flat Uint8Array: R,G,B,R,G,B,...)
-                    const palette = new Uint8Array(maxColors * 3);
-                    for (let i = 0; i < bins.length; i++) {
-                        palette[i*3]   = Math.round(bins[i].r);
-                        palette[i*3+1] = Math.round(bins[i].g);
-                        palette[i*3+2] = Math.round(bins[i].b);
-                    }
-                    return { palette, count: bins.length };
-                }
-
-                // Find nearest palette color index
-                function nearestColor(r, g, b, palette, numColors) {
-                    let minDist = Infinity, idx = 0;
-                    for (let i = 0; i < numColors; i++) {
-                        const pr = palette[i*3], pg = palette[i*3+1], pb = palette[i*3+2];
-                        const d = (r-pr)*(r-pr) + (g-pg)*(g-pg) + (b-pb)*(b-pb);
-                        if (d < minDist) { minDist = d; idx = i; if (d === 0) break; }
-                    }
-                    return idx;
-                }
-
-                // Map pixels to palette indices, with optional Floyd-Steinberg dithering
-                function mapPixels(rgba, palette, numColors, width, height, doFSDither) {
-                    const indices = new Uint8Array(width * height);
-                    if (!doFSDither) {
-                        for (let i = 0; i < width * height; i++) {
-                            indices[i] = nearestColor(rgba[i*4], rgba[i*4+1], rgba[i*4+2], palette, numColors);
-                        }
-                        return indices;
-                    }
-                    // Floyd-Steinberg dithering
-                    const buf = new Float32Array(rgba.length);
-                    for (let i = 0; i < rgba.length; i++) buf[i] = rgba[i];
-                    for (let y = 0; y < height; y++) {
-                        for (let x = 0; x < width; x++) {
-                            const i = (y * width + x) * 4;
-                            const or = Math.max(0, Math.min(255, buf[i]));
-                            const og = Math.max(0, Math.min(255, buf[i+1]));
-                            const ob = Math.max(0, Math.min(255, buf[i+2]));
-                            const idx = nearestColor(or, og, ob, palette, numColors);
-                            indices[y * width + x] = idx;
-                            const nr = palette[idx*3], ng = palette[idx*3+1], nb = palette[idx*3+2];
-                            const er = or - nr, eg = og - ng, eb = ob - nb;
-                            // distribute error
-                            const distribute = (dx, dy, factor) => {
-                                const nx = x + dx, ny = y + dy;
-                                if (nx < 0 || nx >= width || ny >= height) return;
-                                const ni = (ny * width + nx) * 4;
-                                buf[ni]   += er * factor;
-                                buf[ni+1] += eg * factor;
-                                buf[ni+2] += eb * factor;
-                            };
-                            distribute(1, 0, 7/16);
-                            distribute(-1, 1, 3/16);
-                            distribute(0, 1, 5/16);
-                            distribute(1, 1, 1/16);
-                        }
-                    }
-                    return indices;
-                }
-
-                // GIF LZW encoder
-                function lzwEncode(pixels, minCodeSize) {
-                    const clearCode = 1 << minCodeSize;
-                    const eoiCode = clearCode + 1;
-                    const output = [];
-
-                    let codeSize = minCodeSize + 1;
-                    let nextCode = eoiCode + 1;
-                    // Code table: Map of string key -> code
-                    const table = new Map();
-                    function initTable() {
-                        table.clear();
-                        for (let i = 0; i < clearCode; i++) table.set(String.fromCharCode(i), i);
-                        nextCode = eoiCode + 1;
-                        codeSize = minCodeSize + 1;
-                    }
-                    initTable();
-
-                    // Bit packing
-                    let buf = 0, bufBits = 0;
-                    const bytes = [];
-                    function outputCode(code) {
-                        buf |= code << bufBits;
-                        bufBits += codeSize;
-                        while (bufBits >= 8) {
-                            bytes.push(buf & 0xFF);
-                            buf >>= 8;
-                            bufBits -= 8;
-                        }
-                    }
-
-                    outputCode(clearCode);
-                    let str = String.fromCharCode(pixels[0]);
-                    for (let i = 1; i < pixels.length; i++) {
-                        const c = String.fromCharCode(pixels[i]);
-                        const key = str + c;
-                        if (table.has(key)) {
-                            str = key;
-                        } else {
-                            outputCode(table.get(str));
-                            if (nextCode < 4096) {
-                                table.set(key, nextCode++);
-                                if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
-                            } else {
-                                outputCode(clearCode);
-                                initTable();
-                            }
-                            str = c;
-                        }
-                    }
-                    outputCode(table.get(str));
-                    outputCode(eoiCode);
-                    if (bufBits > 0) bytes.push(buf & 0xFF);
-
-                    // Pack into GIF sub-blocks (max 255 bytes each)
-                    const blocks = [];
-                    for (let i = 0; i < bytes.length; i += 255) {
-                        const chunk = bytes.slice(i, i + 255);
-                        blocks.push(chunk.length);
-                        chunk.forEach(b => blocks.push(b));
-                    }
-                    blocks.push(0); // block terminator
-                    return blocks;
-                }
-
-                // Write GIF Header + Logical Screen Descriptor (no global color table — per-frame LCT)
-                wString('GIF89a');
-                wUint16LE(w);
-                wUint16LE(h);
-                wb(0x00); // packed: no GCT
-                wb(0x00); // background color index
-                wb(0x00); // pixel aspect ratio
-
-                // Netscape loop extension
-                if (repeat >= 0) {
-                    wb(0x21); wb(0xFF); wb(0x0B);
-                    wString('NETSCAPE2.0');
-                    wb(0x03); wb(0x01);
-                    wUint16LE(repeat);
-                    wb(0x00);
-                }
-
-                const maxColors = Math.min(256, Math.max(2, this.maxColors));
-                // We need palette size to be a power of 2
-                // Use 256 (2^8)
-                const palettePow = Math.max(0, Math.ceil(Math.log2(maxColors)) - 1);
-                const paletteSize = 1 << (palettePow + 1);
-
+                const maxColors = this.maxColors;
+                const enc = gifenc.GIFEncoder();
                 let frameIdx = 0;
-                let prevData = null;
-
-                function getDiffBounds(prev, curr, width, height) {
-                    let x1 = width, y1 = height, x2 = -1, y2 = -1;
-                    for (let y = 0; y < height; y++) {
-                        for (let x = 0; x < width; x++) {
-                            const i = (y * width + x) * 4;
-                            if (prev[i] !== curr[i] || prev[i+1] !== curr[i+1] ||
-                                prev[i+2] !== curr[i+2] || prev[i+3] !== curr[i+3]) {
-                                if (x < x1) x1 = x;
-                                if (x > x2) x2 = x;
-                                if (y < y1) y1 = y;
-                                if (y > y2) y2 = y;
-                            }
-                        }
-                    }
-                    if (x2 < 0) return null;
-                    return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
-                }
-
-                function extractRegion(data, fullWidth, rx, ry, rw, rh) {
-                    const out = new Uint8ClampedArray(rw * rh * 4);
-                    for (let y = 0; y < rh; y++) {
-                        const srcOff = ((ry + y) * fullWidth + rx) * 4;
-                        const dstOff = y * rw * 4;
-                        out.set(data.subarray(srcOff, srcOff + rw * 4), dstOff);
-                    }
-                    return out;
-                }
 
                 const processFrame = () => {
                     if (this.aborted) { reject(new Error('Aborted')); return; }
                     if (frameIdx >= frames.length) {
-                        wb(0x3B);
-                        const blob = new Blob([new Uint8Array(output)], { type: 'image/gif' });
+                        enc.finish();
+                        const blob = new Blob([enc.bytesView()], { type: 'image/gif' });
                         resolve(blob);
                         return;
                     }
@@ -1977,44 +1741,16 @@
                     const frame = frames[frameIdx];
                     if (onProgress) onProgress(frameIdx / frames.length);
 
-                    let fx = 0, fy = 0, fw = w, fh = h;
-                    let pixelData = frame.data;
+                    const rgba = new Uint8Array(frame.data.buffer.slice(0));
+                    const palette = gifenc.quantize(rgba, maxColors);
+                    const indices = gifenc.applyPalette(rgba, palette);
 
-                    if (frameIdx > 0 && prevData) {
-                        const diff = getDiffBounds(prevData, frame.data, w, h);
-                        if (diff && (diff.w < w || diff.h < h)) {
-                            fx = diff.x; fy = diff.y; fw = diff.w; fh = diff.h;
-                            pixelData = extractRegion(frame.data, w, fx, fy, fw, fh);
-                        }
-                    }
-                    prevData = frame.data;
-
-                    const { palette, count: actualColors } = quantize(pixelData, maxColors);
-                    const indices = mapPixels(pixelData, palette, actualColors, fw, fh, doDither);
-
-                    wb(0x21); wb(0xF9); wb(0x04);
-                    wb(frameIdx === 0 ? 0x00 : 0x04);
-                    wUint16LE(Math.round(frame.delay / 10));
-                    wb(0x00);
-                    wb(0x00);
-
-                    wb(0x2C);
-                    wUint16LE(fx); wUint16LE(fy);
-                    wUint16LE(fw); wUint16LE(fh);
-                    wb(0x80 | palettePow);
-
-                    for (let i = 0; i < paletteSize; i++) {
-                        if (i * 3 + 2 < palette.length) {
-                            wb(palette[i*3]); wb(palette[i*3+1]); wb(palette[i*3+2]);
-                        } else {
-                            wb(0); wb(0); wb(0);
-                        }
-                    }
-
-                    const minCodeSize = Math.max(2, Math.ceil(Math.log2(paletteSize)));
-                    wb(minCodeSize);
-                    const lzwData = lzwEncode(indices, minCodeSize);
-                    wBytes(lzwData);
+                    enc.writeFrame(indices, w, h, {
+                        palette: palette,
+                        delay: frame.delay,
+                        repeat: frameIdx === 0 ? this.repeat : undefined,
+                        dispose: frameIdx === 0 ? -1 : 2
+                    });
 
                     frameIdx++;
                     setTimeout(processFrame, 0);
