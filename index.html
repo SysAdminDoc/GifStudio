@@ -1180,6 +1180,40 @@
                     </div>
                 </div>
 
+                <!-- Redaction Tool -->
+                <div class="sidebar-section" id="redactSection" style="display: none;">
+                    <div class="sidebar-title">Redact / Pixelate</div>
+                    <div class="tool-group">
+                        <div class="input-group">
+                            <label class="input-label" for="redactMode">Mode</label>
+                            <select id="redactMode">
+                                <option value="pixelate">Pixelate</option>
+                                <option value="blur">Blur</option>
+                                <option value="black">Black Fill</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="redactStrength">Strength</label>
+                            <div class="input-row">
+                                <input type="range" id="redactStrength" min="4" max="32" value="12" step="2">
+                                <span class="zoom-display" id="redactStrengthVal">12px</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label" for="redactScope">Apply to</label>
+                            <select id="redactScope">
+                                <option value="current">Current frame</option>
+                                <option value="all" selected>All frames</option>
+                                <option value="selected">Selected frames</option>
+                            </select>
+                        </div>
+                        <p style="font-size:11px; color:var(--text-muted);">Draw a rectangle on the canvas to select the redaction area, then click Apply.</p>
+                        <button class="btn btn-primary" id="applyRedact" style="width: 100%;">
+                            Apply Redaction
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Export Settings -->
                 <div class="sidebar-section" id="exportSection" style="display: none;">
                     <div class="sidebar-title">Export Settings</div>
@@ -1273,6 +1307,9 @@
                     </button>
                     <button class="tool-btn" id="toolCrop" title="Crop">
                         <svg class="icon"><use href="#icon-crop"/></svg>
+                    </button>
+                    <button class="tool-btn" id="toolRedact" title="Redact/Pixelate">
+                        <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                     </button>
                     <div class="toolbar-divider"></div>
                     <button class="tool-btn" id="zoomOut" title="Zoom Out">
@@ -2035,6 +2072,7 @@
                 // Tools
                 document.getElementById('toolSelect').addEventListener('click', () => this.setActiveTool('select'));
                 document.getElementById('toolCrop').addEventListener('click', () => this.setActiveTool('crop'));
+                document.getElementById('toolRedact').addEventListener('click', () => this.setActiveTool('redact'));
 
                 // Zoom
                 document.getElementById('zoomIn').addEventListener('click', () => this.setZoom(this.zoom + 0.25));
@@ -2134,6 +2172,12 @@
                     this.renderFrame();
                 });
                 document.getElementById('applyFilters').addEventListener('click', () => this.applyFilters());
+
+                // Redaction
+                document.getElementById('redactStrength').addEventListener('input', (e) => {
+                    document.getElementById('redactStrengthVal').textContent = e.target.value + 'px';
+                });
+                document.getElementById('applyRedact').addEventListener('click', () => this.applyRedaction());
 
                 // Optimize
                 document.getElementById('optimizeLossy').addEventListener('input', (e) => {
@@ -2438,6 +2482,7 @@
                 document.getElementById('timingSection').style.display = 'block';
                 document.getElementById('speedSection').style.display = 'block';
                 document.getElementById('filtersSection').style.display = 'block';
+                document.getElementById('redactSection').style.display = 'block';
                 document.getElementById('exportSection').style.display = 'block';
                 document.getElementById('optimizeSection').style.display = 'block';
                 document.getElementById('analyzerSection').style.display = 'block';
@@ -3193,6 +3238,83 @@
             }
 
             // ============================================
+            // Redaction
+            // ============================================
+
+            applyRedaction() {
+                if (this.frames.length === 0) return;
+
+                const mode = document.getElementById('redactMode').value;
+                const strength = parseInt(document.getElementById('redactStrength').value) || 12;
+                const scope = document.getElementById('redactScope').value;
+                const { x, y, w, h } = this.cropRect;
+                const rx = Math.round(x), ry = Math.round(y), rw = Math.round(w), rh = Math.round(h);
+
+                if (rw < 4 || rh < 4) {
+                    this.showToast('Select a larger region to redact', 'warning');
+                    return;
+                }
+
+                this.saveUndoState('Redact');
+
+                let targets;
+                if (scope === 'current') targets = [this.currentFrame];
+                else if (scope === 'selected' && this.selectedFrames.size > 0) targets = [...this.selectedFrames];
+                else targets = this.frames.map((_, i) => i);
+
+                targets.forEach(i => {
+                    const frame = this.frames[i];
+                    const ctx = frame.canvas.getContext('2d', { willReadFrequently: true });
+
+                    if (mode === 'black') {
+                        ctx.fillStyle = '#000';
+                        ctx.fillRect(rx, ry, rw, rh);
+                    } else if (mode === 'pixelate') {
+                        const blockSize = strength;
+                        const imgData = ctx.getImageData(rx, ry, rw, rh);
+                        const d = imgData.data;
+                        for (let by = 0; by < rh; by += blockSize) {
+                            for (let bx = 0; bx < rw; bx += blockSize) {
+                                let tr = 0, tg = 0, tb = 0, count = 0;
+                                const bw = Math.min(blockSize, rw - bx);
+                                const bh = Math.min(blockSize, rh - by);
+                                for (let py = 0; py < bh; py++) {
+                                    for (let px = 0; px < bw; px++) {
+                                        const idx = ((by + py) * rw + (bx + px)) * 4;
+                                        tr += d[idx]; tg += d[idx + 1]; tb += d[idx + 2]; count++;
+                                    }
+                                }
+                                tr = Math.round(tr / count); tg = Math.round(tg / count); tb = Math.round(tb / count);
+                                for (let py = 0; py < bh; py++) {
+                                    for (let px = 0; px < bw; px++) {
+                                        const idx = ((by + py) * rw + (bx + px)) * 4;
+                                        d[idx] = tr; d[idx + 1] = tg; d[idx + 2] = tb;
+                                    }
+                                }
+                            }
+                        }
+                        ctx.putImageData(imgData, rx, ry);
+                    } else if (mode === 'blur') {
+                        const passes = Math.max(1, Math.round(strength / 4));
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = rw;
+                        tempCanvas.height = rh;
+                        const tctx = tempCanvas.getContext('2d');
+                        tctx.drawImage(frame.canvas, rx, ry, rw, rh, 0, 0, rw, rh);
+                        for (let p = 0; p < passes; p++) {
+                            tctx.drawImage(tempCanvas, 0, 0, rw, rh, -1, -1, rw + 2, rh + 2);
+                        }
+                        ctx.drawImage(tempCanvas, 0, 0, rw, rh, rx, ry, rw, rh);
+                        this.releaseCanvas(tempCanvas);
+                    }
+                });
+
+                this.renderTimeline();
+                this.renderFrame();
+                this.showToast(`Redaction applied to ${targets.length} frame${targets.length > 1 ? 's' : ''}`, 'success');
+            }
+
+            // ============================================
             // Zoom
             // ============================================
 
@@ -3224,12 +3346,12 @@
 
             setActiveTool(tool) {
                 this.activeTool = tool;
-                
+
                 document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
                 document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1)).classList.add('active');
 
                 const cropOverlay = document.getElementById('cropOverlay');
-                if (tool === 'crop') {
+                if (tool === 'crop' || tool === 'redact') {
                     cropOverlay.classList.add('active');
                     this.cropRect = { x: 0, y: 0, w: this.originalWidth || 100, h: this.originalHeight || 100 };
                     this.updateCropBox();
