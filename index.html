@@ -968,7 +968,7 @@
                 </button>
                 <button class="btn btn-primary" id="exportBtn" disabled>
                     <svg class="icon icon-sm"><use href="#icon-download"/></svg>
-                    Export GIF
+                    Export
                 </button>
                 <button class="btn btn-secondary" id="shareBtn" style="display:none;" title="Share exported GIF">
                     <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -1246,8 +1246,15 @@
                     <div class="sidebar-title">Export Settings</div>
                     <div class="tool-group">
                         <div class="input-group">
+                            <label class="input-label" for="exportFormat">Format</label>
+                            <select id="exportFormat">
+                                <option value="gif">GIF</option>
+                                <option value="apng">APNG (better quality + alpha)</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
                             <label class="input-label" for="exportFilename">Filename</label>
-                            <input type="text" id="exportFilename" value="edited" placeholder="filename (no .gif)">
+                            <input type="text" id="exportFilename" value="edited" placeholder="filename (no extension)">
                         </div>
                         <div class="input-group">
                             <label class="input-label" for="qualitySlider">Quality</label>
@@ -2164,7 +2171,11 @@
                 document.getElementById('ditherSelect').addEventListener('change', () => this.updateSizeEstimate());
 
                 // Export
-                document.getElementById('exportBtn').addEventListener('click', () => this.exportGIF());
+                document.getElementById('exportBtn').addEventListener('click', () => {
+                    const fmt = document.getElementById('exportFormat').value;
+                    if (fmt === 'apng') this.exportAPNG();
+                    else this.exportGIF();
+                });
                 document.getElementById('splitFramesBtn').addEventListener('click', () => this.splitFramesToPNG());
                 document.getElementById('shareBtn').addEventListener('click', async () => {
                     if (this.lastExportFile) {
@@ -3580,6 +3591,106 @@
                         console.error('Export error:', error);
                         this.showToast('Export failed: ' + error.message, 'error');
                     }
+                }
+            }
+
+            // ============================================
+            // APNG Export
+            // ============================================
+
+            async loadUPNG() {
+                if (window.UPNG) return;
+                if (!window.pako) {
+                    await new Promise((resolve, reject) => {
+                        const s = document.createElement('script');
+                        s.src = 'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js';
+                        s.onload = resolve;
+                        s.onerror = () => reject(new Error('Failed to load pako'));
+                        document.head.appendChild(s);
+                    });
+                }
+                await new Promise((resolve, reject) => {
+                    const s = document.createElement('script');
+                    s.src = 'https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.min.js';
+                    s.onload = resolve;
+                    s.onerror = () => reject(new Error('Failed to load UPNG.js'));
+                    document.head.appendChild(s);
+                });
+            }
+
+            async exportAPNG() {
+                if (this.frames.length === 0) return;
+
+                const modal = document.getElementById('exportModal');
+                const progress = document.getElementById('exportProgress');
+                const status = document.getElementById('exportStatus');
+                modal.classList.add('active');
+                progress.style.width = '0%';
+                status.textContent = 'Loading APNG encoder...';
+
+                try {
+                    await this.loadUPNG();
+
+                    status.textContent = 'Preparing frames...';
+                    const w = this.originalWidth, h = this.originalHeight;
+                    const imgs = [];
+                    const dels = [];
+
+                    for (let i = 0; i < this.frames.length; i++) {
+                        const frame = this.frames[i];
+                        const ctx = frame.canvas.getContext('2d', { willReadFrequently: true });
+                        const imgData = ctx.getImageData(0, 0, w, h);
+                        imgs.push(imgData.data.buffer);
+                        dels.push(frame.delay);
+                        progress.style.width = ((i + 1) / this.frames.length * 40) + '%';
+                        status.textContent = `Preparing frame ${i + 1} of ${this.frames.length}...`;
+                    }
+
+                    status.textContent = 'Encoding APNG...';
+                    progress.classList.add('encoding');
+
+                    const colorCount = parseInt(document.getElementById('colorCount').value) || 256;
+                    const cnum = colorCount >= 256 ? 0 : colorCount;
+                    const apngBuffer = UPNG.encode(imgs, w, h, cnum, dels);
+
+                    progress.classList.remove('encoding');
+                    modal.classList.remove('active');
+
+                    const blob = new Blob([apngBuffer], { type: 'image/apng' });
+                    const sizeText = this.formatBytes(blob.size);
+                    const filenameInput = document.getElementById('exportFilename');
+                    const filename = (filenameInput && filenameInput.value.trim()) || (this.originalFilename + '-edited');
+                    const fullFilename = filename + '.apng';
+
+                    if (window.showSaveFilePicker) {
+                        try {
+                            const handle = await window.showSaveFilePicker({
+                                suggestedName: fullFilename,
+                                types: [{ description: 'APNG Image', accept: { 'image/apng': ['.apng', '.png'] } }]
+                            });
+                            const writable = await handle.createWritable();
+                            await writable.write(blob);
+                            await writable.close();
+                            this.showToast(`APNG saved (${sizeText})`, 'success');
+                        } catch (e) {
+                            if (e.name !== 'AbortError') throw e;
+                        }
+                    } else {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = fullFilename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        this.revokeBlob(url);
+                        this.showToast(`APNG exported (${sizeText})`, 'success');
+                    }
+                } catch (error) {
+                    progress.classList.remove('encoding');
+                    modal.classList.remove('active');
+                    console.error('APNG export error:', error);
+                    this.showToast('APNG export failed: ' + error.message, 'error');
                 }
             }
 
