@@ -1944,6 +1944,143 @@
             init() {
                 this.bindEvents();
                 this.setActiveTool('select');
+                this.checkSessionRecovery();
+            }
+
+            // ============================================
+            // Session Autosave (IndexedDB)
+            // ============================================
+
+            openDB() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open('GifStudioSession', 1);
+                    req.onupgradeneeded = () => {
+                        const db = req.result;
+                        if (!db.objectStoreNames.contains('session')) {
+                            db.createObjectStore('session');
+                        }
+                    };
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                });
+            }
+
+            scheduleAutosave() {
+                if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+                this._autosaveTimer = setTimeout(() => this.saveSession(), 2000);
+            }
+
+            async saveSession() {
+                if (this.frames.length === 0) return;
+                try {
+                    const db = await this.openDB();
+                    const frameData = [];
+                    for (const frame of this.frames) {
+                        const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
+                        const buf = await blob.arrayBuffer();
+                        frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
+                    }
+                    const session = {
+                        frames: frameData,
+                        width: this.originalWidth,
+                        height: this.originalHeight,
+                        currentFrame: this.currentFrame,
+                        filename: this.originalFilename,
+                        savedAt: Date.now()
+                    };
+                    const tx = db.transaction('session', 'readwrite');
+                    tx.objectStore('session').put(session, 'current');
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                    });
+                    db.close();
+                } catch (e) {
+                    console.error('Autosave failed:', e);
+                }
+            }
+
+            async checkSessionRecovery() {
+                try {
+                    const db = await this.openDB();
+                    const tx = db.transaction('session', 'readonly');
+                    const req = tx.objectStore('session').get('current');
+                    const session = await new Promise((resolve, reject) => {
+                        req.onsuccess = () => resolve(req.result);
+                        req.onerror = () => reject(req.error);
+                    });
+                    db.close();
+                    if (!session || !session.frames || session.frames.length === 0) return;
+
+                    const age = Date.now() - (session.savedAt || 0);
+                    if (age > 7 * 24 * 60 * 60 * 1000) {
+                        this.clearSavedSession();
+                        return;
+                    }
+
+                    const mins = Math.round(age / 60000);
+                    const timeAgo = mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+                    this.showRecoveryBanner(session, timeAgo);
+                } catch (e) {
+                    console.error('Session recovery check failed:', e);
+                }
+            }
+
+            showRecoveryBanner(session, timeAgo) {
+                const banner = document.createElement('div');
+                banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:1500;background:var(--bg-elevated);border:1px solid var(--accent-primary);border-radius:var(--radius-md);padding:12px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-lg);font-size:13px;max-width:90vw;';
+                banner.innerHTML = `<span style="color:var(--text-secondary);">Recover previous session? (${session.frames.length} frames, ${timeAgo})</span>`;
+                const restoreBtn = document.createElement('button');
+                restoreBtn.className = 'btn btn-primary';
+                restoreBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
+                restoreBtn.textContent = 'Restore';
+                restoreBtn.onclick = () => { banner.remove(); this.restoreSession(session); };
+                const dismissBtn = document.createElement('button');
+                dismissBtn.className = 'btn btn-ghost';
+                dismissBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
+                dismissBtn.textContent = 'Dismiss';
+                dismissBtn.onclick = () => { banner.remove(); this.clearSavedSession(); };
+                banner.appendChild(restoreBtn);
+                banner.appendChild(dismissBtn);
+                document.body.appendChild(banner);
+            }
+
+            async restoreSession(session) {
+                this.clearUndoHistory();
+                this.frames = [];
+                this.originalWidth = session.width;
+                this.originalHeight = session.height;
+                this.originalFilename = session.filename || 'recovered';
+                this.rawGifMeta = null;
+
+                for (const fd of session.frames) {
+                    const blob = new Blob([fd.png], { type: 'image/png' });
+                    const img = await new Promise((resolve, reject) => {
+                        const i = new Image();
+                        i.onload = () => { URL.revokeObjectURL(i.src); resolve(i); };
+                        i.onerror = () => { URL.revokeObjectURL(i.src); reject(new Error('Failed to load frame')); };
+                        i.src = URL.createObjectURL(blob);
+                    });
+                    const c = document.createElement('canvas');
+                    c.width = session.width;
+                    c.height = session.height;
+                    c.getContext('2d').drawImage(img, 0, 0);
+                    this.frames.push({ canvas: c, delay: fd.delay, disposalType: fd.disposalType || 0 });
+                }
+
+                this.currentFrame = Math.min(session.currentFrame || 0, this.frames.length - 1);
+                this.selectedFrames.clear();
+                this.showEditor();
+                this.showToast(`Restored ${this.frames.length} frames`, 'success');
+            }
+
+            async clearSavedSession() {
+                try {
+                    const db = await this.openDB();
+                    const tx = db.transaction('session', 'readwrite');
+                    tx.objectStore('session').delete('current');
+                    db.close();
+                } catch (e) {}
             }
 
             // ============================================
@@ -1974,6 +2111,7 @@
                 this.redoStack.forEach(s => s.frames.forEach(f => this.releaseCanvas(f.canvas)));
                 this.redoStack = [];
                 this.updateUndoRedoButtons();
+                this.scheduleAutosave();
             }
 
             restoreSnapshot(snapshot) {
@@ -2335,6 +2473,7 @@
                         throw new Error('No frames found in GIF');
                     }
                     this.showEditor();
+                    this.scheduleAutosave();
                     this.showToast(`Loaded ${frames.length} frames`, 'success');
 
                 } catch (error) {
@@ -2428,6 +2567,7 @@
                     this.currentFrame = 0;
                     this.selectedFrames.clear();
                     this.showEditor();
+                    this.scheduleAutosave();
                     this.showToast(`Created GIF from ${images.length} images`, 'success');
                 } catch (error) {
                     console.error('Error loading images:', error);
