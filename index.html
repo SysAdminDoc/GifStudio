@@ -1856,6 +1856,8 @@
             this.height = height;
             this.repeat = opts.repeat != null ? opts.repeat : 0;
             this.maxColors = Math.min(256, Math.max(2, opts.maxColors || 256));
+            this.quality = Math.min(30, Math.max(1, parseInt(opts.quality, 10) || 10));
+            this.dither = opts.dither || false;
             this.frames = [];
             this.aborted = false;
         }
@@ -1867,6 +1869,82 @@
         }
 
         abort() { this.aborted = true; }
+
+        getPrequantizeRoundRGB() {
+            if (this.quality <= 5) return 1;
+            if (this.quality <= 15) return 3;
+            if (this.quality <= 25) return 6;
+            return 10;
+        }
+
+        applyDitheredPalette(data, palette, width, height) {
+            const pixelCount = width * height;
+            const work = new Float32Array(pixelCount * 3);
+            const indices = new Uint8Array(pixelCount);
+            const cache = new Map();
+
+            for (let src = 0, dst = 0; src < data.length && dst < work.length; src += 4, dst += 3) {
+                work[dst] = data[src];
+                work[dst + 1] = data[src + 1];
+                work[dst + 2] = data[src + 2];
+            }
+
+            const clampByte = (value) => Math.max(0, Math.min(255, Math.round(value)));
+            const nearest = (r, g, b) => {
+                const key = ((r >> 2) << 12) | ((g >> 2) << 6) | (b >> 2);
+                if (cache.has(key)) return cache.get(key);
+
+                let bestIndex = 0;
+                let bestDistance = Infinity;
+                for (let i = 0; i < palette.length; i++) {
+                    const p = palette[i];
+                    const dr = r - p[0];
+                    const dg = g - p[1];
+                    const db = b - p[2];
+                    const distance = dr * dr + dg * dg + db * db;
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestIndex = i;
+                    }
+                }
+                cache.set(key, bestIndex);
+                return bestIndex;
+            };
+
+            const diffuse = (base, errR, errG, errB, factor) => {
+                work[base] += errR * factor;
+                work[base + 1] += errG * factor;
+                work[base + 2] += errB * factor;
+            };
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const pixelIndex = y * width + x;
+                    const base = pixelIndex * 3;
+                    const r = clampByte(work[base]);
+                    const g = clampByte(work[base + 1]);
+                    const b = clampByte(work[base + 2]);
+                    const paletteIndex = nearest(r, g, b);
+                    const color = palette[paletteIndex];
+
+                    indices[pixelIndex] = paletteIndex;
+
+                    const errR = r - color[0];
+                    const errG = g - color[1];
+                    const errB = b - color[2];
+
+                    if (x + 1 < width) diffuse(base + 3, errR, errG, errB, 7 / 16);
+                    if (y + 1 < height) {
+                        const nextRow = base + width * 3;
+                        if (x > 0) diffuse(nextRow - 3, errR, errG, errB, 3 / 16);
+                        diffuse(nextRow, errR, errG, errB, 5 / 16);
+                        if (x + 1 < width) diffuse(nextRow + 3, errR, errG, errB, 1 / 16);
+                    }
+                }
+            }
+
+            return indices;
+        }
 
         render(onProgress) {
             return new Promise((resolve, reject) => {
@@ -1890,8 +1968,14 @@
                     if (onProgress) onProgress(frameIdx / frames.length);
 
                     const rgba = new Uint8Array(frame.data.buffer.slice(0));
+                    const roundRGB = this.getPrequantizeRoundRGB();
+                    if (roundRGB > 1) {
+                        gifenc.prequantize(rgba, { roundRGB, roundAlpha: 1 });
+                    }
                     const palette = gifenc.quantize(rgba, maxColors);
-                    const indices = gifenc.applyPalette(rgba, palette);
+                    const indices = this.dither === 'FloydSteinberg'
+                        ? this.applyDitheredPalette(rgba, palette, w, h)
+                        : gifenc.applyPalette(rgba, palette);
 
                     enc.writeFrame(indices, w, h, {
                         palette: palette,
@@ -1932,6 +2016,8 @@
                 this.activeTool = 'select';
                 this.originalFilename = 'edited';
                 this.currentEncoder = null;
+                this._loadInProgress = false;
+                this._autosaveGeneration = 0;
 
                 // Crop state
                 this.cropRect = { x: 0, y: 0, w: 100, h: 100 };
@@ -1987,27 +2073,44 @@
             }
 
             scheduleAutosave() {
+                this._autosaveGeneration++;
+                const generation = this._autosaveGeneration;
                 if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
-                this._autosaveTimer = setTimeout(() => this.saveSession(), 2000);
+                this._autosaveTimer = setTimeout(() => this.saveSession(generation), 2000);
             }
 
-            async saveSession() {
+            async saveSession(generation = this._autosaveGeneration) {
                 if (this.frames.length === 0) return;
+                const snapshot = {
+                    frames: this.frames.map(f => {
+                        const c = document.createElement('canvas');
+                        c.width = f.canvas.width;
+                        c.height = f.canvas.height;
+                        c.getContext('2d').drawImage(f.canvas, 0, 0);
+                        return { canvas: c, delay: f.delay, disposalType: f.disposalType };
+                    }),
+                    width: this.originalWidth,
+                    height: this.originalHeight,
+                    currentFrame: this.currentFrame,
+                    filename: this.originalFilename
+                };
+                let db;
                 try {
-                    const db = await this.openDB();
+                    db = await this.openDB();
                     const frameData = [];
-                    for (const frame of this.frames) {
+                    for (const frame of snapshot.frames) {
                         const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
                         if (!blob) continue;
                         const buf = await blob.arrayBuffer();
                         frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
                     }
+                    if (generation !== this._autosaveGeneration) return;
                     const session = {
                         frames: frameData,
-                        width: this.originalWidth,
-                        height: this.originalHeight,
-                        currentFrame: this.currentFrame,
-                        filename: this.originalFilename,
+                        width: snapshot.width,
+                        height: snapshot.height,
+                        currentFrame: snapshot.currentFrame,
+                        filename: snapshot.filename,
                         savedAt: Date.now()
                     };
                     const tx = db.transaction('session', 'readwrite');
@@ -2016,9 +2119,11 @@
                         tx.oncomplete = resolve;
                         tx.onerror = () => reject(tx.error);
                     });
-                    db.close();
                 } catch (e) {
                     console.error('Autosave failed:', e);
+                } finally {
+                    if (db) db.close();
+                    snapshot.frames.forEach(f => this.releaseCanvas(f.canvas));
                 }
             }
 
@@ -2183,6 +2288,7 @@
                 const snapshot = this.undoStack.pop();
                 this.restoreSnapshot(snapshot);
                 this.updateUndoRedoButtons();
+                this.scheduleAutosave();
                 this.showToast(`Undo: ${snapshot.label}`, 'info');
             }
 
@@ -2207,6 +2313,7 @@
                 const snapshot = this.redoStack.pop();
                 this.restoreSnapshot(snapshot);
                 this.updateUndoRedoButtons();
+                this.scheduleAutosave();
                 this.showToast('Redo', 'info');
             }
 
@@ -2439,6 +2546,11 @@
                     this.showToast('Please select a valid GIF file', 'error');
                     return;
                 }
+                if (this._loadInProgress) {
+                    this.showToast('A file is already loading. Wait for it to finish.', 'warning');
+                    return;
+                }
+                this._loadInProgress = true;
 
                 this.stopPlayback();
                 this.selectedFrames.clear();
@@ -2509,6 +2621,8 @@
                     document.getElementById('dropIcon').style.display = '';
                     document.getElementById('dropText').style.display = '';
                     document.getElementById('parseSpinner').style.display = 'none';
+                } finally {
+                    this._loadInProgress = false;
                 }
             }
 
@@ -2549,12 +2663,17 @@
 
             async handleImageFiles(files) {
                 this.fileInput.value = '';
-                this.clearUndoHistory();
                 const imageFiles = files.filter(f => f.type.startsWith('image/'));
                 if (imageFiles.length === 0) {
                     this.showToast('No valid image files found', 'error');
                     return;
                 }
+                if (this._loadInProgress) {
+                    this.showToast('A file is already loading. Wait for it to finish.', 'warning');
+                    return;
+                }
+                this._loadInProgress = true;
+                this.clearUndoHistory();
 
                 document.getElementById('dropIcon').style.display = 'none';
                 document.getElementById('dropText').style.display = 'none';
@@ -2604,6 +2723,8 @@
                     document.getElementById('dropIcon').style.display = '';
                     document.getElementById('dropText').style.display = '';
                     document.getElementById('parseSpinner').style.display = 'none';
+                } finally {
+                    this._loadInProgress = false;
                 }
             }
 
@@ -2685,12 +2806,21 @@
                 tempCanvas.width = this.originalWidth;
                 tempCanvas.height = this.originalHeight;
                 const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+                const restoreCanvas = document.createElement('canvas');
+                restoreCanvas.width = this.originalWidth;
+                restoreCanvas.height = this.originalHeight;
+                const restoreCtx = restoreCanvas.getContext('2d', { willReadFrequently: true });
 
                 // Process each frame
                 rawFrames.forEach((frame, index) => {
                     // Handle disposal
                     if (index === 0) {
                         tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    }
+
+                    if (frame.disposalType === 3) {
+                        restoreCtx.clearRect(0, 0, restoreCanvas.width, restoreCanvas.height);
+                        restoreCtx.drawImage(tempCanvas, 0, 0);
                     }
 
                     // Create ImageData from patch
@@ -2720,16 +2850,17 @@
                     if (frame.disposalType === 2) {
                         // Restore to background
                         tempCtx.clearRect(frame.dims.left, frame.dims.top, frame.dims.width, frame.dims.height);
-                    } else if (frame.disposalType === 3 && index > 0) {
-                        // Restore to previous - copy previous frame
+                    } else if (frame.disposalType === 3) {
+                        // Restore to the compositor state from before this frame was drawn
                         tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-                        tempCtx.drawImage(this.frames[index - 1].canvas, 0, 0);
+                        tempCtx.drawImage(restoreCanvas, 0, 0);
                     }
                 });
 
                 this.currentFrame = 0;
 
                 this.releaseCanvas(tempCanvas);
+                this.releaseCanvas(restoreCanvas);
             }
 
             showEditor() {
@@ -3164,6 +3295,7 @@
                     const dx = (e.clientX - this.cropDragStart.x) / this.zoom;
                     const dy = (e.clientY - this.cropDragStart.y) / this.zoom;
                     this.cropDragStart = { x: e.clientX, y: e.clientY };
+                    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
                     switch (this.cropDragType) {
                         case 'move':
@@ -3171,28 +3303,32 @@
                             this.cropRect.y = Math.max(0, Math.min(this.originalHeight - this.cropRect.h, this.cropRect.y + dy));
                             break;
                         case 'nw':
-                            const newX = Math.max(0, this.cropRect.x + dx);
-                            const newY = Math.max(0, this.cropRect.y + dy);
-                            this.cropRect.w += this.cropRect.x - newX;
-                            this.cropRect.h += this.cropRect.y - newY;
+                            const right = this.cropRect.x + this.cropRect.w;
+                            const bottom = this.cropRect.y + this.cropRect.h;
+                            const newX = clamp(this.cropRect.x + dx, 0, right - 10);
+                            const newY = clamp(this.cropRect.y + dy, 0, bottom - 10);
                             this.cropRect.x = newX;
                             this.cropRect.y = newY;
+                            this.cropRect.w = right - newX;
+                            this.cropRect.h = bottom - newY;
                             break;
                         case 'ne':
-                            this.cropRect.w = Math.max(10, Math.min(this.originalWidth - this.cropRect.x, this.cropRect.w + dx));
-                            const newYne = Math.max(0, this.cropRect.y + dy);
-                            this.cropRect.h += this.cropRect.y - newYne;
+                            const bottomNe = this.cropRect.y + this.cropRect.h;
+                            this.cropRect.w = clamp(this.cropRect.w + dx, 10, this.originalWidth - this.cropRect.x);
+                            const newYne = clamp(this.cropRect.y + dy, 0, bottomNe - 10);
                             this.cropRect.y = newYne;
+                            this.cropRect.h = bottomNe - newYne;
                             break;
                         case 'sw':
-                            const newXsw = Math.max(0, this.cropRect.x + dx);
-                            this.cropRect.w += this.cropRect.x - newXsw;
+                            const rightSw = this.cropRect.x + this.cropRect.w;
+                            const newXsw = clamp(this.cropRect.x + dx, 0, rightSw - 10);
                             this.cropRect.x = newXsw;
-                            this.cropRect.h = Math.max(10, Math.min(this.originalHeight - this.cropRect.y, this.cropRect.h + dy));
+                            this.cropRect.w = rightSw - newXsw;
+                            this.cropRect.h = clamp(this.cropRect.h + dy, 10, this.originalHeight - this.cropRect.y);
                             break;
                         case 'se':
-                            this.cropRect.w = Math.max(10, Math.min(this.originalWidth - this.cropRect.x, this.cropRect.w + dx));
-                            this.cropRect.h = Math.max(10, Math.min(this.originalHeight - this.cropRect.y, this.cropRect.h + dy));
+                            this.cropRect.w = clamp(this.cropRect.w + dx, 10, this.originalWidth - this.cropRect.x);
+                            this.cropRect.h = clamp(this.cropRect.h + dy, 10, this.originalHeight - this.cropRect.y);
                             break;
                     }
 
@@ -3705,11 +3841,14 @@
                     this.currentEncoder = encoder;
 
                     // Add frames
-                    this.frames.forEach((frame, i) => {
+                    for (let i = 0; i < this.frames.length; i++) {
+                        if (encoder.aborted) throw new Error('Aborted');
+                        const frame = this.frames[i];
                         encoder.addFrame(frame.canvas, frame.delay);
                         progress.style.width = ((i + 1) / this.frames.length * 40) + '%';
                         status.textContent = `Adding frame ${i + 1} of ${this.frames.length}...`;
-                    });
+                        await new Promise(resolve => requestAnimationFrame(resolve));
+                    }
 
                     status.textContent = 'Encoding...';
                     progress.classList.add('encoding');

@@ -1,6 +1,8 @@
 # GifStudio
 
+![Version](https://img.shields.io/badge/version-v0.5.2-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+![Platform](https://img.shields.io/badge/platform-Browser-blueviolet)
 ![Language](https://img.shields.io/badge/language-JavaScript-yellow)
 ![Type](https://img.shields.io/badge/type-Web%20App-brightgreen)
 
@@ -27,7 +29,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Background Layer** — Burn a solid color or image behind all frames
 
 ### Export & Optimize
-- **GIF Export** — gifenc PNN quantizer, configurable color count (16–256), loop control
+- **GIF Export** — gifenc PNN quantizer, quality, Floyd-Steinberg dithering, configurable color count (16–256), loop control
 - **GIF Optimization** — Lossy LZW compression via gifsicle-wasm (O1/O2/O3 levels, 27–75% size reduction)
 - **Split Frames** — Export all frames as numbered PNGs in a ZIP archive
 - **File Size Estimation** — Live estimated size with Discord, Slack, and Twitter limit badges
