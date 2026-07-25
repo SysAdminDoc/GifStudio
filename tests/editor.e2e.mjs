@@ -10,6 +10,25 @@ function gifFile(name = 'pixel.gif') {
   return { name, mimeType: 'image/gif', buffer: BASIC_GIF };
 }
 
+async function readRecoveryRecord(page) {
+  return page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('GifStudioSession', 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction('session').objectStore('session').get('current');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      db.close();
+    }
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js', async route => {
     await route.fulfill({
@@ -123,17 +142,92 @@ test('cancelling export ignores late work and restores editor controls', async (
 
 test('autosave recovery restores frame state after reload', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('recovery.gif'));
-  await page.locator('#frameDelay').fill('23');
+  await page.locator('#exportFormat').selectOption('apng');
+  await page.locator('#frameDelay').fill('110');
   await page.locator('#applyDelayAll').click();
+  await page.locator('#frameDelay').fill('230');
+  await page.locator('#applyDelayAll').click();
+  await page.locator('#exportFilename').fill('recover-me');
+  await page.locator('#speedSlider').fill('1.5');
   await page.waitForTimeout(2_500);
 
+  const record = await readRecoveryRecord(page);
+  expect(record.schemaVersion).toBe(2);
+  expect(record.appVersion).toBe('0.5.2');
+  expect(record.frames[0].delay).toBe(230);
+  expect(record.editorState.exportFormat).toBe('apng');
+  expect(record.editorState.exportFilename).toBe('recover-me');
+  expect(record.editorState.playbackSpeed).toBe(1.5);
+
   await page.reload();
-  await expect(page.getByText(/Recover previous session/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Saved session recovery' })).toBeVisible();
   await page.getByRole('button', { name: 'Restore' }).click();
 
   await expect(page.locator('#totalFrames')).toHaveText('1');
   await expect(page.locator('#currentDelay')).toHaveText('230');
+  await expect(page.locator('#exportFormat')).toHaveValue('apng');
+  await expect(page.locator('#exportFilename')).toHaveValue('recover-me');
+  await expect(page.locator('#speedDisplay')).toHaveText('1.5x');
   await expect(page.locator('#exportBtn')).toBeEnabled();
+  await expect(page.locator('#exportBtn')).toBeFocused();
+});
+
+test('legacy recovery records migrate and corrupt records are removed', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile('legacy.gif'));
+  await page.waitForTimeout(2_500);
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('GifStudioSession', 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const existing = await new Promise((resolve, reject) => {
+      const request = db.transaction('session').objectStore('session').get('current');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    delete existing.schemaVersion;
+    delete existing.appVersion;
+    delete existing.editorState;
+    delete existing.sourceTiming;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('session', 'readwrite');
+      tx.objectStore('session').put(existing, 'current');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Restore' }).click();
+  await expect(page.locator('#totalFrames')).toHaveText('1');
+  await expect(page.locator('#timingSummary')).toContainText('Source (Migrated recovery)');
+
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('GifStudioSession', 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('session', 'readwrite');
+      tx.objectStore('session').put({
+        schemaVersion: 2,
+        width: 1,
+        height: 1,
+        frames: [{ png: null, delay: 100 }],
+        savedAt: Date.now()
+      }, 'current');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.reload();
+  await expect(page.locator('.toast.error')).toContainText('Saved recovery was invalid and has been removed');
+  await expect(page.locator('#recoveryBanner')).toHaveCount(0);
+  await expect.poll(() => readRecoveryRecord(page)).toBeUndefined();
 });
 
 test('timeline keyboard navigation and confirmed deletion update frame state', async ({ page }) => {

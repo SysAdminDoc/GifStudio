@@ -2110,6 +2110,9 @@
         // GIF Studio Pro - Main Application
         // ============================================
 
+        const APP_VERSION = '0.5.2';
+        const SESSION_SCHEMA_VERSION = 2;
+
         class GIFEditor {
             constructor() {
                 // State
@@ -2129,6 +2132,10 @@
                 this.currentEncoder = null;
                 this._loadInProgress = false;
                 this._autosaveGeneration = 0;
+                this._autosaveTransaction = null;
+                this._lastSavedGeneration = 0;
+                this._storageErrorShown = false;
+                this.storageStatus = 'checking';
                 this._operationGeneration = 0;
                 this._activeOperation = null;
                 this._activeExportJob = null;
@@ -2266,27 +2273,155 @@
 
             openDB() {
                 return new Promise((resolve, reject) => {
-                    const req = indexedDB.open('GifStudioSession', 1);
+                    const req = indexedDB.open('GifStudioSession', SESSION_SCHEMA_VERSION);
                     req.onupgradeneeded = () => {
                         const db = req.result;
                         if (!db.objectStoreNames.contains('session')) {
                             db.createObjectStore('session');
                         }
                     };
-                    req.onsuccess = () => resolve(req.result);
+                    req.onblocked = () => reject(new Error('Recovery database upgrade is blocked by another GifStudio tab'));
+                    req.onsuccess = () => {
+                        const db = req.result;
+                        db.onversionchange = () => db.close();
+                        this.storageStatus = 'ready';
+                        resolve(db);
+                    };
                     req.onerror = () => reject(req.error);
                 });
+            }
+
+            captureEditorState() {
+                return {
+                    currentFrame: this.currentFrame,
+                    playbackSpeed: this.playbackSpeed,
+                    playbackMode: this.playbackMode,
+                    exportFormat: this.getExportFormat(),
+                    exportFilename: document.getElementById('exportFilename').value,
+                    quality: Number(document.getElementById('qualitySlider').value),
+                    colorCount: document.getElementById('colorCount').value,
+                    dither: document.getElementById('ditherSelect').value,
+                    loop: document.getElementById('loopGif').checked
+                };
+            }
+
+            restoreEditorState(state = {}) {
+                this.currentFrame = Math.max(0, Math.min(
+                    Number.isInteger(state.currentFrame) ? state.currentFrame : 0,
+                    this.frames.length - 1
+                ));
+                this.playbackSpeed = Number.isFinite(state.playbackSpeed) ? state.playbackSpeed : 1;
+                document.getElementById('speedSlider').value = String(this.playbackSpeed);
+                document.getElementById('speedDisplay').textContent = `${this.playbackSpeed}x`;
+                this.setPlaybackMode(['normal', 'pingpong', 'boomerang'].includes(state.playbackMode)
+                    ? state.playbackMode
+                    : 'normal');
+
+                const format = state.exportFormat === 'apng' ? 'apng' : 'gif';
+                document.getElementById('exportFormat').value = format;
+                if (typeof state.exportFilename === 'string' && state.exportFilename.trim()) {
+                    document.getElementById('exportFilename').value = state.exportFilename;
+                }
+                if (Number.isFinite(state.quality)) {
+                    document.getElementById('qualitySlider').value = String(Math.max(1, Math.min(30, state.quality)));
+                }
+                if (['16', '32', '64', '128', '256'].includes(state.colorCount)) {
+                    document.getElementById('colorCount').value = state.colorCount;
+                }
+                if (['none', 'FloydSteinberg'].includes(state.dither)) {
+                    document.getElementById('ditherSelect').value = state.dither;
+                }
+                if (typeof state.loop === 'boolean') {
+                    document.getElementById('loopGif').checked = state.loop;
+                }
+                this.syncTimingControls();
+                this.renderTimeline();
+                this.renderFrame();
+            }
+
+            migrateSession(record) {
+                const invalid = (message, name = 'DataError') => {
+                    const error = new Error(message);
+                    error.name = name;
+                    throw error;
+                };
+                if (!record || typeof record !== 'object') {
+                    invalid('Recovery record is not an object');
+                }
+                const version = record.schemaVersion || 1;
+                if (version > SESSION_SCHEMA_VERSION) {
+                    invalid(`Recovery schema ${version} requires a newer GifStudio`, 'VersionError');
+                }
+                if (!Array.isArray(record.frames) || record.frames.length === 0) {
+                    invalid('Recovery record has no frames');
+                }
+                try {
+                    GifDecoder.validateBudget(record.width, record.height, record.frames.length);
+                } catch (error) {
+                    invalid(error.message);
+                }
+                record.frames.forEach((frame, index) => {
+                    const validPng = frame?.png instanceof ArrayBuffer || ArrayBuffer.isView(frame?.png);
+                    if (!validPng) invalid(`Recovery frame ${index + 1} has no PNG data`);
+                    if (!Number.isFinite(frame.delay) || frame.delay < 1) {
+                        invalid(`Recovery frame ${index + 1} has an invalid delay`);
+                    }
+                });
+
+                if (version === 1) {
+                    return {
+                        ...record,
+                        schemaVersion: SESSION_SCHEMA_VERSION,
+                        appVersion: APP_VERSION,
+                        sourceTiming: {
+                            format: 'Migrated recovery',
+                            delays: record.frames.map(frame => frame.delay)
+                        },
+                        editorState: {
+                            currentFrame: record.currentFrame || 0,
+                            exportFilename: `${record.filename || 'recovered'}-edited`,
+                            exportFormat: 'gif',
+                            playbackSpeed: 1,
+                            playbackMode: 'normal'
+                        }
+                    };
+                }
+                if (record.sourceTiming && (
+                    typeof record.sourceTiming.format !== 'string' ||
+                    !Array.isArray(record.sourceTiming.delays) ||
+                    record.sourceTiming.delays.some(delay => !Number.isFinite(delay) || delay < 1)
+                )) {
+                    invalid('Recovery source timing is invalid');
+                }
+                return record;
+            }
+
+            reportStorageError(context, error) {
+                this.storageStatus = 'error';
+                console.error(`${context}:`, error);
+                if (this._storageErrorShown) return;
+                this._storageErrorShown = true;
+                const quota = error?.name === 'QuotaExceededError';
+                this.showToast(
+                    quota
+                        ? 'Local recovery storage is full. Export your work, then dismiss an older recovery.'
+                        : 'Local recovery is unavailable. Keep this tab open and export your work before leaving.',
+                    'error'
+                );
             }
 
             scheduleAutosave() {
                 this._autosaveGeneration++;
                 const generation = this._autosaveGeneration;
+                if (this._autosaveTransaction) {
+                    try { this._autosaveTransaction.abort(); } catch {}
+                }
                 if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
                 this._autosaveTimer = setTimeout(() => this.saveSession(generation), 2000);
             }
 
             async saveSession(generation = this._autosaveGeneration) {
-                if (this.frames.length === 0) return;
+                if (this.frames.length === 0 || generation !== this._autosaveGeneration) return;
                 const snapshot = {
                     frames: this.frames.map(f => {
                         const c = document.createElement('canvas');
@@ -2297,37 +2432,61 @@
                     }),
                     width: this.originalWidth,
                     height: this.originalHeight,
-                    currentFrame: this.currentFrame,
-                    filename: this.originalFilename
+                    filename: this.originalFilename,
+                    sourceTiming: this.sourceTiming
+                        ? { format: this.sourceTiming.format, delays: [...this.sourceTiming.delays] }
+                        : null,
+                    editorState: this.captureEditorState()
                 };
                 let db;
+                let tx;
                 try {
                     db = await this.openDB();
+                    if (generation !== this._autosaveGeneration) return;
                     const frameData = [];
                     for (const frame of snapshot.frames) {
                         const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
-                        if (!blob) continue;
+                        if (!blob) throw new Error('Browser could not serialize a recovery frame');
+                        if (generation !== this._autosaveGeneration) return;
                         const buf = await blob.arrayBuffer();
                         frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
                     }
                     if (generation !== this._autosaveGeneration) return;
                     const session = {
+                        schemaVersion: SESSION_SCHEMA_VERSION,
+                        appVersion: APP_VERSION,
+                        generation,
                         frames: frameData,
                         width: snapshot.width,
                         height: snapshot.height,
-                        currentFrame: snapshot.currentFrame,
                         filename: snapshot.filename,
+                        sourceTiming: snapshot.sourceTiming,
+                        editorState: snapshot.editorState,
                         savedAt: Date.now()
                     };
-                    const tx = db.transaction('session', 'readwrite');
+                    tx = db.transaction('session', 'readwrite');
+                    this._autosaveTransaction = tx;
+                    if (generation !== this._autosaveGeneration) {
+                        tx.abort();
+                        return;
+                    }
                     tx.objectStore('session').put(session, 'current');
                     await new Promise((resolve, reject) => {
                         tx.oncomplete = resolve;
                         tx.onerror = () => reject(tx.error);
+                        tx.onabort = () => reject(tx.error || new DOMException('Autosave superseded', 'AbortError'));
                     });
+                    if (generation === this._autosaveGeneration) {
+                        this._lastSavedGeneration = generation;
+                        this.storageStatus = 'ready';
+                        this._storageErrorShown = false;
+                    }
                 } catch (e) {
-                    console.error('Autosave failed:', e);
+                    if (generation === this._autosaveGeneration && e?.name !== 'AbortError') {
+                        this.reportStorageError('Autosave failed', e);
+                    }
                 } finally {
+                    if (this._autosaveTransaction === tx) this._autosaveTransaction = null;
                     if (db) db.close();
                     snapshot.frames.forEach(f => this.releaseCanvas(f.canvas));
                 }
@@ -2343,38 +2502,64 @@
                         req.onsuccess = () => resolve(req.result);
                         req.onerror = () => reject(req.error);
                     });
-                    if (!session || !session.frames || session.frames.length === 0) return;
+                    if (!session) return;
+                    const migrated = this.migrateSession(session);
 
-                    const age = Date.now() - (session.savedAt || 0);
+                    const age = Date.now() - (migrated.savedAt || 0);
                     if (age > 7 * 24 * 60 * 60 * 1000) {
-                        this.clearSavedSession();
+                        await this.clearSavedSession();
                         return;
                     }
 
                     const mins = Math.round(age / 60000);
                     const timeAgo = mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
-                    this.showRecoveryBanner(session, timeAgo);
+                    this.showRecoveryBanner(migrated, timeAgo);
                 } catch (e) {
-                    console.error('Session recovery check failed:', e);
+                    if (e?.name === 'VersionError') {
+                        console.error('Session recovery version mismatch:', e);
+                        this.showToast('Saved recovery belongs to a newer GifStudio version and was retained unchanged.', 'warning');
+                    } else if (e?.name === 'DataError' || /^Recovery /.test(e?.message || '')) {
+                        console.error('Invalid recovery record:', e);
+                        await this.clearSavedSession({ reportErrors: false });
+                        this.showToast('Saved recovery was invalid and has been removed. Import the source file to continue.', 'error');
+                    } else {
+                        this.reportStorageError('Session recovery check failed', e);
+                    }
                 } finally {
                     if (db) try { db.close(); } catch {}
                 }
             }
 
             showRecoveryBanner(session, timeAgo) {
+                document.getElementById('recoveryBanner')?.remove();
                 const banner = document.createElement('div');
+                banner.id = 'recoveryBanner';
+                banner.setAttribute('role', 'region');
+                banner.setAttribute('aria-label', 'Saved session recovery');
+                banner.setAttribute('aria-live', 'polite');
                 banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:1500;background:var(--bg-elevated);border:1px solid var(--accent-primary);border-radius:var(--radius-md);padding:12px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-lg);font-size:13px;max-width:90vw;';
-                banner.innerHTML = `<span style="color:var(--text-secondary);">Recover previous session? (${session.frames.length} frames, ${timeAgo})</span>`;
+                const message = document.createElement('span');
+                message.style.color = 'var(--text-secondary)';
+                message.textContent = `Recover previous session? (${session.frames.length} frames, ${timeAgo}). Saved locally until dismissed or seven days old.`;
+                banner.appendChild(message);
                 const restoreBtn = document.createElement('button');
                 restoreBtn.className = 'btn btn-primary';
                 restoreBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
                 restoreBtn.textContent = 'Restore';
-                restoreBtn.onclick = () => { banner.remove(); this.restoreSession(session); };
+                restoreBtn.onclick = async () => {
+                    banner.remove();
+                    await this.restoreSession(session);
+                    document.getElementById('exportBtn').focus();
+                };
                 const dismissBtn = document.createElement('button');
                 dismissBtn.className = 'btn btn-ghost';
                 dismissBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
                 dismissBtn.textContent = 'Dismiss';
-                dismissBtn.onclick = () => { banner.remove(); this.clearSavedSession(); };
+                dismissBtn.onclick = async () => {
+                    banner.remove();
+                    await this.clearSavedSession();
+                    document.getElementById('importBtn').focus();
+                };
                 banner.appendChild(restoreBtn);
                 banner.appendChild(dismissBtn);
                 document.body.appendChild(banner);
@@ -2384,6 +2569,7 @@
                 const token = this.beginOperation('Session restore');
                 if (!token) return;
                 const restoredFrames = [];
+                let committed = false;
                 try {
                     GifDecoder.validateBudget(session.width, session.height, session.frames?.length || 0);
                     for (const fd of session.frames) {
@@ -2407,31 +2593,44 @@
                         frames: restoredFrames,
                         width: session.width,
                         height: session.height,
-                        currentFrame: session.currentFrame,
+                        currentFrame: session.editorState?.currentFrame,
                         filename: session.filename || 'recovered',
                         rawGifMeta: null,
+                        sourceTiming: session.sourceTiming,
                         sourceFormat: 'Recovered session',
                         exportFilename: `${session.filename || 'recovered'}-edited`
                     }, token);
+                    committed = true;
+                    this.restoreEditorState(session.editorState);
                     this.showToast(`Restored ${restoredFrames.length} frames`, 'success');
                 } catch (error) {
-                    this.releaseFrames(restoredFrames);
+                    if (!committed) this.releaseFrames(restoredFrames);
                     if (error.name !== 'AbortError') {
                         console.error('Session restore failed:', error);
                         this.showToast('Recovery failed: ' + error.message, 'error');
+                        await this.clearSavedSession({ reportErrors: false });
                     }
                 } finally {
                     this.finishOperation(token);
                 }
             }
 
-            async clearSavedSession() {
+            async clearSavedSession({ reportErrors = true } = {}) {
+                let db;
                 try {
-                    const db = await this.openDB();
+                    db = await this.openDB();
                     const tx = db.transaction('session', 'readwrite');
                     tx.objectStore('session').delete('current');
-                    db.close();
-                } catch (e) {}
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                        tx.onabort = () => reject(tx.error || new Error('Recovery delete aborted'));
+                    });
+                } catch (e) {
+                    if (reportErrors) this.reportStorageError('Could not clear recovery', e);
+                } finally {
+                    if (db) db.close();
+                }
             }
 
             // ============================================
