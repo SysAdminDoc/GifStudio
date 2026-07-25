@@ -2057,6 +2057,9 @@
                 const frames = this.frames;
                 const w = this.width, h = this.height;
                 const maxColors = this.maxColors;
+                // Full-canvas frames are intentional. Local-frame deltas require
+                // look-ahead disposal handling to clear opaque pixels back to
+                // transparency; the prior encoder did not preserve that case.
                 const enc = gifenc.GIFEncoder();
                 let frameIdx = 0;
 

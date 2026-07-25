@@ -135,6 +135,79 @@ test('GIF export emits a valid signature from the shipped page', async ({ page }
   await expect(page.locator('#analyzerContent')).toContainText('Validated GIF output · 1×1 · 1 frame');
 });
 
+test('full-frame GIF baseline preserves pixels, timing, size, and decoder compatibility', async ({ page }) => {
+  const benchmark = await page.evaluate(async () => {
+    const width = 16;
+    const height = 16;
+    const sources = [];
+    const encoder = new GifEncoder(width, height, {
+      quality: 1,
+      dither: false,
+      repeat: 0,
+      maxColors: 16
+    });
+
+    for (const [x, y] of [[1, 1], [6, 1], [6, 6]]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.fillStyle = '#000';
+      context.fillRect(0, 0, width, height);
+      context.fillStyle = '#f00';
+      context.fillRect(x, y, 4, 4);
+      sources.push(new Uint8Array(context.getImageData(0, 0, width, height).data));
+      encoder.addFrame(canvas, 100);
+    }
+
+    const blob = await encoder.render();
+    const buffer = await blob.arrayBuffer();
+    const parsed = GifDecoder.parseGIF(buffer);
+    const decoded = GifDecoder.decompressFrames(parsed, true);
+    let maxChannelDiff = 0;
+    decoded.forEach((frame, frameIndex) => {
+      frame.patch.forEach((value, index) => {
+        maxChannelDiff = Math.max(maxChannelDiff, Math.abs(value - sources[frameIndex][index]));
+      });
+    });
+
+    let nativeFrameCount = null;
+    if (typeof ImageDecoder !== 'undefined') {
+      const nativeDecoder = new ImageDecoder({ data: buffer, type: 'image/gif' });
+      await nativeDecoder.tracks.ready;
+      nativeFrameCount = nativeDecoder.tracks.selectedTrack?.frameCount ?? null;
+      for (let frameIndex = 0; frameIndex < nativeFrameCount; frameIndex++) {
+        const result = await nativeDecoder.decode({ frameIndex, completeFramesOnly: true });
+        result.image.close();
+      }
+      nativeDecoder.close();
+    }
+
+    return {
+      bytes: blob.size,
+      maxChannelDiff,
+      nativeFrameCount,
+      delays: parsed.frames.map(frame => (frame.graphicControl?.delay || 0) * 10),
+      descriptors: parsed.frames.map(frame => ({
+        left: frame.left,
+        top: frame.top,
+        width: frame.width,
+        height: frame.height
+      }))
+    };
+  });
+
+  expect(benchmark.bytes).toBeLessThan(1200);
+  expect(benchmark.maxChannelDiff).toBe(0);
+  expect(benchmark.nativeFrameCount).toBe(3);
+  expect(benchmark.delays).toEqual([100, 100, 100]);
+  expect(benchmark.descriptors).toEqual([
+    { left: 0, top: 0, width: 16, height: 16 },
+    { left: 0, top: 0, width: 16, height: 16 },
+    { left: 0, top: 0, width: 16, height: 16 }
+  ]);
+});
+
 test('GIF export rounds millisecond delays to centiseconds deterministically', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile());
   await page.locator('#exportFormat').selectOption('apng');
