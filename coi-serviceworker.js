@@ -1,5 +1,5 @@
 /*! GifStudio service worker; COOP/COEP behavior derived from coi-serviceworker (MIT). */
-const APP_VERSION = '0.5.2';
+const APP_VERSION = '0.6.0';
 const CACHE_NAME = `gifstudio-v${APP_VERSION}`;
 const APP_SHELL = [
     './',

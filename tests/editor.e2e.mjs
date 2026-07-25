@@ -104,7 +104,7 @@ test('diagnostics copy capability state and sanitized errors without media ident
   await expect(page.locator('.toast.success').last()).toContainText('Diagnostics copied without media or filenames');
   const report = await page.evaluate(() => window.__copiedDiagnostics);
 
-  expect(report).toContain('App version: 0.5.2');
+  expect(report).toContain('App version: 0.6.0');
   expect(report).toContain('Dimensions: 1x1');
   expect(report).toContain('Frame count: 1');
   expect(report).toContain('Selected format: GIF');
@@ -469,7 +469,7 @@ test('service worker caches the app shell for offline reload and exposes update 
     await page.reload();
   }
   const cachedPaths = await page.evaluate(async () => {
-    const cache = await caches.open('gifstudio-v0.5.2');
+    const cache = await caches.open('gifstudio-v0.6.0');
     return (await cache.keys()).map(request => new URL(request.url).pathname);
   });
   expect(cachedPaths).toEqual(expect.arrayContaining([
@@ -535,7 +535,7 @@ test('autosave recovery restores frame state after reload', async ({ page }) => 
 
   const record = await readRecoveryRecord(page);
   expect(record.schemaVersion).toBe(2);
-  expect(record.appVersion).toBe('0.5.2');
+  expect(record.appVersion).toBe('0.6.0');
   expect(record.frames[0].delay).toBe(230);
   expect(record.editorState.exportFormat).toBe('apng');
   expect(record.editorState.exportFilename).toBe('recover-me');

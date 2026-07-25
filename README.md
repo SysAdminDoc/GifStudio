@@ -1,6 +1,6 @@
 # GifStudio
 
-![Version](https://img.shields.io/badge/version-v0.5.2-brightgreen)
+![Version](https://img.shields.io/badge/version-v0.6.0-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Browser-blueviolet)
 ![Language](https://img.shields.io/badge/language-JavaScript-yellow)

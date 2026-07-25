@@ -2,7 +2,7 @@
         // GIF Studio Pro - Main Application
         // ============================================
 
-        const APP_VERSION = '0.5.2';
+        const APP_VERSION = '0.6.0';
         const SESSION_SCHEMA_VERSION = 2;
         const MEBIBYTE = 1024 * 1024;
         const MEMORY_LIMITS = Object.freeze({
