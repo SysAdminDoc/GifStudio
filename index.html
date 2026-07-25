@@ -2112,6 +2112,13 @@
 
         const APP_VERSION = '0.5.2';
         const SESSION_SCHEMA_VERSION = 2;
+        const MEBIBYTE = 1024 * 1024;
+        const MEMORY_LIMITS = Object.freeze({
+            lowDeviceDefault: 256 * MEBIBYTE,
+            mediumDeviceDefault: 384 * MEBIBYTE,
+            standardDefault: 512 * MEBIBYTE,
+            absoluteCeiling: 1024 * MEBIBYTE
+        });
         const OPTIONAL_ASSETS = Object.freeze({
             pako: {
                 src: 'vendor/pako-2.1.0.min.js',
@@ -2163,6 +2170,12 @@
                 this._exportGeneration = 0;
                 this._projectGeneration = 0;
                 this.sourceTiming = null;
+                this.memoryTelemetry = {
+                    peakEstimatedBytes: 0,
+                    lastEstimate: null,
+                    overrideCount: 0
+                };
+                this._autosaveMemoryWarningShown = false;
 
                 // Crop state
                 this.cropRect = { x: 0, y: 0, w: 100, h: 100 };
@@ -2240,7 +2253,13 @@
                 this._loadInProgress = false;
             }
 
-            prepareMutation() {
+            prepareMutation({
+                operation = 'Edit',
+                width = this.originalWidth,
+                height = this.originalHeight,
+                frameCount = this.frames.length,
+                temporaryCopies = 1
+            } = {}) {
                 if (this._activeOperation) {
                     this.showToast(`Wait for ${this._activeOperation.kind} to finish`, 'warning');
                     return false;
@@ -2249,9 +2268,150 @@
                     this.showToast('Cancel the active export before editing', 'warning');
                     return false;
                 }
+                try {
+                    this.preflightMemory(operation, {
+                        width,
+                        height,
+                        frameCount,
+                        temporaryCopies
+                    });
+                } catch (error) {
+                    this.showToast(error.message, 'error');
+                    return false;
+                }
                 this.stopPlayback();
                 this._projectGeneration++;
                 return true;
+            }
+
+            getMemoryLimits() {
+                const deviceMemory = Number(navigator.deviceMemory);
+                let defaultBytes = MEMORY_LIMITS.standardDefault;
+                if (Number.isFinite(deviceMemory) && deviceMemory <= 2) {
+                    defaultBytes = MEMORY_LIMITS.lowDeviceDefault;
+                } else if (Number.isFinite(deviceMemory) && deviceMemory <= 4) {
+                    defaultBytes = MEMORY_LIMITS.mediumDeviceDefault;
+                }
+                const deviceCeiling = Number.isFinite(deviceMemory)
+                    ? Math.max(defaultBytes * 2, deviceMemory * 256 * MEBIBYTE)
+                    : MEMORY_LIMITS.absoluteCeiling;
+                return {
+                    defaultBytes,
+                    safeCeilingBytes: Math.min(MEMORY_LIMITS.absoluteCeiling, deviceCeiling),
+                    deviceMemory: Number.isFinite(deviceMemory) ? deviceMemory : null
+                };
+            }
+
+            estimateFrameBytes(width, height, frameCount) {
+                const pixels = width * height * frameCount;
+                const bytes = pixels * 4;
+                if (!Number.isSafeInteger(pixels) || !Number.isSafeInteger(bytes) || pixels < 0) {
+                    const error = new Error('Frame memory exceeds safe browser arithmetic limits');
+                    error.name = 'MemoryBudgetError';
+                    throw error;
+                }
+                return { pixels, bytes };
+            }
+
+            estimateResidentBytes() {
+                const framesBytes = frames => (frames || []).reduce(
+                    (sum, frame) => sum + frame.canvas.width * frame.canvas.height * 4,
+                    0
+                );
+                const snapshotsBytes = stack => stack.reduce(
+                    (sum, snapshot) => sum + framesBytes(snapshot.frames),
+                    0
+                );
+                return framesBytes(this.frames) +
+                    snapshotsBytes(this.undoStack) +
+                    snapshotsBytes(this.redoStack);
+            }
+
+            estimateMemory(operation, {
+                width,
+                height,
+                frameCount,
+                temporaryCopies = 1
+            }) {
+                const raw = this.estimateFrameBytes(width, height, frameCount);
+                const residentBytes = this.estimateResidentBytes();
+                const temporaryBytes = raw.bytes * temporaryCopies;
+                const estimatedPeakBytes = residentBytes + temporaryBytes;
+                return {
+                    operation,
+                    width,
+                    height,
+                    frameCount,
+                    pixels: raw.pixels,
+                    rawFrameBytes: raw.bytes,
+                    residentBytes,
+                    temporaryBytes,
+                    temporaryCopies,
+                    estimatedPeakBytes,
+                    limits: this.getMemoryLimits(),
+                    overridden: false,
+                    recordedAt: new Date().toISOString()
+                };
+            }
+
+            recordMemoryEstimate(estimate) {
+                this.memoryTelemetry.lastEstimate = estimate;
+                this.memoryTelemetry.peakEstimatedBytes = Math.max(
+                    this.memoryTelemetry.peakEstimatedBytes,
+                    estimate.estimatedPeakBytes
+                );
+                this.updateAnalyzer();
+            }
+
+            memoryBudgetError(message) {
+                const error = new Error(message);
+                error.name = 'MemoryBudgetError';
+                return error;
+            }
+
+            preflightMemory(operation, options, { allowOverride = true } = {}) {
+                GifDecoder.validateBudget(options.width, options.height, options.frameCount);
+                const estimate = this.estimateMemory(operation, options);
+                this.recordMemoryEstimate(estimate);
+                const { defaultBytes, safeCeilingBytes } = estimate.limits;
+                if (estimate.estimatedPeakBytes <= defaultBytes) return estimate;
+
+                const details =
+                    `${estimate.frameCount.toLocaleString()} frame${estimate.frameCount === 1 ? '' : 's'} at ` +
+                    `${estimate.width}×${estimate.height} contain ${this.formatBytes(estimate.rawFrameBytes)} of raw pixels; ` +
+                    `resident frames/history plus temporary buffers may peak at ${this.formatBytes(estimate.estimatedPeakBytes)}.`;
+                const recovery =
+                    ' Export the current work first, then retry with fewer/smaller frames or reload and re-import to clear undo history.';
+
+                if (estimate.estimatedPeakBytes > safeCeilingBytes) {
+                    throw this.memoryBudgetError(
+                        `${operation} stopped before allocation. ${details} ` +
+                        `The safe ceiling is ${this.formatBytes(safeCeilingBytes)}.` +
+                        recovery
+                    );
+                }
+                if (!allowOverride) {
+                    throw this.memoryBudgetError(
+                        `${operation} paused because ${details} ` +
+                        `The automatic-task budget is ${this.formatBytes(defaultBytes)}.` +
+                        recovery
+                    );
+                }
+
+                const approved = window.confirm(
+                    `${operation} may exceed this browser's ${this.formatBytes(defaultBytes)} default memory budget.\n\n` +
+                    `${details}\n\nContinuing can make this tab unresponsive. Continue once?` +
+                    recovery
+                );
+                if (!approved) {
+                    throw this.memoryBudgetError(
+                        `${operation} cancelled before allocation. ${details}` + recovery
+                    );
+                }
+                estimate.overridden = true;
+                this.memoryTelemetry.overrideCount++;
+                this.recordMemoryEstimate(estimate);
+                return estimate;
             }
 
             releaseFrames(frames) {
@@ -2444,6 +2604,21 @@
 
             async saveSession(generation = this._autosaveGeneration) {
                 if (this.frames.length === 0 || generation !== this._autosaveGeneration) return;
+                try {
+                    this.preflightMemory('Recovery autosave', {
+                        width: this.originalWidth,
+                        height: this.originalHeight,
+                        frameCount: this.frames.length,
+                        temporaryCopies: 1
+                    }, { allowOverride: false });
+                    this._autosaveMemoryWarningShown = false;
+                } catch (error) {
+                    if (!this._autosaveMemoryWarningShown) {
+                        this._autosaveMemoryWarningShown = true;
+                        this.showToast(error.message, 'warning');
+                    }
+                    return;
+                }
                 const snapshot = {
                     frames: this.frames.map(f => {
                         const c = document.createElement('canvas');
@@ -2594,6 +2769,12 @@
                 let committed = false;
                 try {
                     GifDecoder.validateBudget(session.width, session.height, session.frames?.length || 0);
+                    this.preflightMemory('Session restore', {
+                        width: session.width,
+                        height: session.height,
+                        frameCount: session.frames.length,
+                        temporaryCopies: 1
+                    });
                     for (const fd of session.frames) {
                         this.assertOperationCurrent(token);
                         const blob = new Blob([fd.png], { type: 'image/png' });
@@ -2630,7 +2811,9 @@
                     if (error.name !== 'AbortError') {
                         console.error('Session restore failed:', error);
                         this.showToast('Recovery failed: ' + error.message, 'error');
-                        await this.clearSavedSession({ reportErrors: false });
+                        if (error.name !== 'MemoryBudgetError') {
+                            await this.clearSavedSession({ reportErrors: false });
+                        }
                     }
                 } finally {
                     this.finishOperation(token);
@@ -2712,7 +2895,7 @@
 
             undo() {
                 if (this.undoStack.length === 0) return;
-                if (!this.prepareMutation()) return;
+                if (!this.prepareMutation({ operation: 'Undo', temporaryCopies: 2 })) return;
                 // Save current state to redo stack
                 const currentState = {
                     label: 'redo',
@@ -2738,7 +2921,7 @@
 
             redo() {
                 if (this.redoStack.length === 0) return;
-                if (!this.prepareMutation()) return;
+                if (!this.prepareMutation({ operation: 'Redo', temporaryCopies: 2 })) return;
                 // Save current state to undo stack
                 const currentState = {
                     label: 'undo',
@@ -3076,7 +3259,7 @@
                         try {
                             project = await this.decodeWithImageDecoder(buffer, token);
                         } catch (error) {
-                            if (error.name === 'AbortError') throw error;
+                            if (error.name === 'AbortError' || error.name === 'MemoryBudgetError') throw error;
                             project = null;
                         }
                     }
@@ -3085,6 +3268,12 @@
                         const gif = GifDecoder.parseGIF(buffer);
                         const gifW = gif.width, gifH = gif.height;
                         const budget = GifDecoder.validateBudget(gifW, gifH, gif.frames.length);
+                        this.preflightMemory('GIF import', {
+                            width: gifW,
+                            height: gifH,
+                            frameCount: gif.frames.length,
+                            temporaryCopies: 2
+                        });
                         if (gifW > 4096 || gifH > 4096) {
                             this.showToast(`Warning: large dimensions ${gifW}×${gifH} — performance may be slow`, 'warning');
                         }
@@ -3157,6 +3346,12 @@
                                 width = vf.displayWidth;
                                 height = vf.displayHeight;
                                 GifDecoder.validateBudget(width, height, frameCount);
+                                this.preflightMemory('GIF import', {
+                                    width,
+                                    height,
+                                    frameCount,
+                                    temporaryCopies: 2
+                                });
                             } else if (vf.displayWidth !== width || vf.displayHeight !== height) {
                                 throw new Error('Invalid GIF: native decoder returned inconsistent frame dimensions');
                             }
@@ -3214,6 +3409,12 @@
                     const maxW = Math.max(...images.map(i => i.naturalWidth));
                     const maxH = Math.max(...images.map(i => i.naturalHeight));
                     GifDecoder.validateBudget(maxW, maxH, images.length);
+                    this.preflightMemory('Image import', {
+                        width: maxW,
+                        height: maxH,
+                        frameCount: images.length,
+                        temporaryCopies: 1
+                    });
 
                     images.forEach(img => {
                         this.assertOperationCurrent(token);
@@ -3276,6 +3477,17 @@
                     if (!token) return;
                     const pastedFrames = [];
                     try {
+                        GifDecoder.validateBudget(
+                            this.originalWidth,
+                            this.originalHeight,
+                            this.frames.length + imageItems.length
+                        );
+                        this.preflightMemory('Paste frames', {
+                            width: this.originalWidth,
+                            height: this.originalHeight,
+                            frameCount: this.frames.length + imageItems.length,
+                            temporaryCopies: 1
+                        });
                         for (const file of imageItems) {
                             this.assertOperationCurrent(token);
                             const img = await new Promise((resolve, reject) => {
@@ -3295,11 +3507,6 @@
                             ctx.drawImage(img, (this.originalWidth - w) / 2, (this.originalHeight - h) / 2, w, h);
                             pastedFrames.push({ canvas: c, delay: 100, disposalType: 0 });
                         }
-                        GifDecoder.validateBudget(
-                            this.originalWidth,
-                            this.originalHeight,
-                            this.frames.length + pastedFrames.length
-                        );
                         this.assertOperationCurrent(token);
                         this.saveUndoState('Paste frames');
                         this.frames.splice(this.currentFrame + 1, 0, ...pastedFrames);
@@ -3711,7 +3918,10 @@
 
             duplicateFrame() {
                 if (this.frames.length === 0) return;
-                if (!this.prepareMutation()) return;
+                if (!this.prepareMutation({
+                    operation: 'Duplicate frame',
+                    frameCount: this.frames.length + 1
+                })) return;
                 this.saveUndoState('Duplicate frame');
 
                 const frame = this.frames[this.currentFrame];
@@ -4035,7 +4245,13 @@
                 const newHeight = parseInt(document.getElementById('resizeH').value) || this.originalHeight;
 
                 if (newWidth === this.originalWidth && newHeight === this.originalHeight) return;
-                if (!this.prepareMutation()) return;
+                const currentArea = this.originalWidth * this.originalHeight;
+                const targetArea = newWidth * newHeight;
+                if (!this.prepareMutation({
+                    operation: 'Resize',
+                    width: targetArea >= currentArea ? newWidth : this.originalWidth,
+                    height: targetArea >= currentArea ? newHeight : this.originalHeight
+                })) return;
                 this.saveUndoState('Resize');
 
                 this.frames.forEach(frame => {
@@ -4076,7 +4292,11 @@
                     this.showToast('New dimensions must be larger than current canvas', 'warning');
                     return;
                 }
-                if (!this.prepareMutation()) return;
+                if (!this.prepareMutation({
+                    operation: 'Canvas expand',
+                    width: newW,
+                    height: newH
+                })) return;
                 this.saveUndoState('Canvas expand');
 
                 const anchor = document.getElementById('expandAnchor').value;
@@ -4462,6 +4682,12 @@
 
                 const returnFocus = document.activeElement;
                 this.stopPlayback();
+                const memoryEstimate = this.preflightMemory(kind, {
+                    width: this.originalWidth,
+                    height: this.originalHeight,
+                    frameCount: this.frames.length,
+                    temporaryCopies: kind === 'GIF optimization' ? 4 : 3
+                });
                 const snapshotFrames = [];
                 try {
                     this.frames.forEach(frame => snapshotFrames.push(this.cloneFrame(frame)));
@@ -4484,6 +4710,7 @@
                     startedAt: performance.now(),
                     progress: 0,
                     maxFrameBlockMs: 0,
+                    memoryEstimate,
                     cancelled: false,
                     cancelReason: '',
                     encoder: null,
@@ -5322,6 +5549,22 @@
                 addSummary(this.rawGifMeta
                     ? 'Raw GIF block metadata available.'
                     : 'Raw GIF block metadata unavailable; showing decoded frame properties.');
+                const memory = this.memoryTelemetry.lastEstimate;
+                if (memory) {
+                    const budgetState = memory.overridden
+                        ? ' · user override accepted'
+                        : memory.estimatedPeakBytes > memory.limits.defaultBytes
+                            ? ' · over default budget'
+                            : '';
+                    addSummary(
+                        `Memory (${memory.operation}): ${this.formatBytes(memory.rawFrameBytes)} raw-frame footprint · ` +
+                        `${this.formatBytes(memory.temporaryBytes)} temporary allocation · ` +
+                        `${this.formatBytes(memory.estimatedPeakBytes)} estimated peak${budgetState}`,
+                        memory.estimatedPeakBytes > memory.limits.defaultBytes
+                            ? 'var(--warning)'
+                            : 'var(--text-secondary)'
+                    );
+                }
 
                 const disposalNames = ['none', 'keep', 'bg', 'prev'];
                 this.frames.forEach((frame, index) => {

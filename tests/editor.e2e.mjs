@@ -54,6 +54,71 @@ test('failed replacement import preserves the active project', async ({ page }) 
   await expect(page.locator('#exportBtn')).toBeEnabled();
 });
 
+test('memory budget cancellation preserves the active project before allocation', async ({ page }) => {
+  const input = page.locator('#fileInput');
+  await input.setInputFiles(gifFile('active.gif'));
+  await expect(page.locator('#totalFrames')).toHaveText('1');
+  await page.evaluate(() => {
+    editor.getMemoryLimits = () => ({
+      defaultBytes: 1,
+      safeCeilingBytes: 1024,
+      deviceMemory: 1
+    });
+  });
+
+  page.once('dialog', dialog => dialog.dismiss());
+  await input.setInputFiles(gifFile('replacement.gif'));
+
+  await expect(page.locator('.toast.error')).toContainText('GIF import cancelled before allocation');
+  await expect(page.locator('#totalFrames')).toHaveText('1');
+  await expect(page.locator('#exportFilename')).toHaveValue('active-edited');
+});
+
+test('memory override is shared by native and JavaScript GIF decode paths', async ({ page }) => {
+  await page.evaluate(() => {
+    editor.getMemoryLimits = () => ({
+      defaultBytes: 1,
+      safeCeilingBytes: 1024,
+      deviceMemory: 1
+    });
+  });
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#fileInput').setInputFiles(gifFile('native.gif'));
+  await expect(page.locator('#analyzerContent')).toContainText('user override accepted');
+  await expect(page.locator('#analyzerContent')).toContainText('Raw GIF block metadata unavailable');
+
+  await page.evaluate(() => {
+    window.ImageDecoder = undefined;
+  });
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#fileInput').setInputFiles(gifFile('fallback.gif'));
+
+  await expect(page.locator('#analyzerContent')).toContainText('Raw GIF block metadata available');
+  expect(await page.evaluate(() => editor.memoryTelemetry.overrideCount)).toBe(2);
+});
+
+test('edit and export memory ceilings stop work before cloning frames', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile());
+  await page.evaluate(() => {
+    editor.getMemoryLimits = () => ({
+      defaultBytes: 1,
+      safeCeilingBytes: 1,
+      deviceMemory: 1
+    });
+  });
+
+  await page.locator('#duplicateFrame').click();
+  await expect(page.locator('.toast.error')).toContainText('Duplicate frame stopped before allocation');
+  await expect(page.locator('#totalFrames')).toHaveText('1');
+
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await page.locator('#exportBtn').click();
+  await expect(page.locator('.toast.error').last()).toContainText('Could not start export: GIF export stopped before allocation');
+  expect(downloads).toBe(0);
+});
+
 test('GIF export emits a valid signature from the shipped page', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile());
   await expect(page.locator('#exportBtn')).toBeEnabled();
