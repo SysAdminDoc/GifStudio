@@ -314,13 +314,82 @@ test('timeline keyboard navigation and confirmed deletion update frame state', a
     gifFile('three.gif')
   ]);
   const firstFrame = page.locator('.frame-item').first();
+  await expect(firstFrame).toHaveAttribute('aria-posinset', '1');
+  await expect(firstFrame).toHaveAttribute('aria-setsize', '3');
+  await expect(firstFrame.locator('.frame-delete')).toHaveAttribute('aria-label', 'Delete frame 1');
   await firstFrame.focus();
-  await firstFrame.press('ArrowRight');
+  await firstFrame.press('End');
+  await expect(page.locator('#currentFrameNum')).toHaveText('3');
+  await expect(page.locator('#frame-option-2')).toBeFocused();
+  await page.locator('#frame-option-2').press('Home');
+  await expect(page.locator('#currentFrameNum')).toHaveText('1');
+  await expect(page.locator('#frame-option-0')).toBeFocused();
+  await page.locator('#frame-option-0').press('ArrowRight');
   await expect(page.locator('#currentFrameNum')).toHaveText('2');
+  await expect(page.locator('#framesContainer')).toHaveAttribute('aria-activedescendant', 'frame-option-1');
 
   await page.locator('.frame-item.selected').press('Delete');
   await page.locator('.frame-item.selected').press('Delete');
   await expect(page.locator('#totalFrames')).toHaveText('2');
+});
+
+test('export modal traps focus, cancels with Escape, and returns focus', async ({ page }) => {
+  const files = Array.from({ length: 20 }, (_, index) => gifFile(`modal-${index + 1}.gif`));
+  await page.locator('#fileInput').setInputFiles(files);
+  const exportButton = page.locator('#exportBtn');
+  await exportButton.focus();
+  await exportButton.click();
+
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'false');
+  await expect(page.locator('#cancelExportBtn')).toBeFocused();
+  await page.locator('#cancelExportBtn').press('Tab');
+  await expect(page.locator('#cancelExportBtn')).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+  await expect(exportButton).toBeFocused();
+});
+
+test('mobile drawer reports state, restores focus, and fits 390px', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const menu = page.locator('#mobileMenuBtn');
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#sidebar')).toHaveClass(/open/);
+  await expect(page.locator('#sidebar')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await expect(menu).toBeFocused();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('playback and reduced-motion timeline updates never smooth-scroll', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([
+    gifFile('motion-one.gif'),
+    gifFile('motion-two.gif'),
+    gifFile('motion-three.gif')
+  ]);
+  await page.evaluate(() => {
+    window.__scrollBehaviors = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(options) {
+      window.__scrollBehaviors.push(options?.behavior || 'auto');
+    };
+  });
+  await page.locator('#playPause').click();
+  await page.waitForTimeout(250);
+  await page.locator('#playPause').click();
+  expect(await page.evaluate(() => window.__scrollBehaviors)).not.toContain('smooth');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    window.__scrollBehaviors = [];
+  });
+  await page.locator('.frame-item.selected').press('ArrowRight');
+  expect(await page.evaluate(() => window.__scrollBehaviors)).toEqual(['auto']);
 });
 
 test('multi-frame export stays within the release performance budget', async ({ page }) => {

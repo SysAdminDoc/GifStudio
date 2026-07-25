@@ -981,7 +981,7 @@
                 <div class="logo-text">GIF <span>Studio</span></div>
             </div>
             <div class="header-actions">
-                <button class="btn btn-secondary btn-icon mobile-menu-btn" id="mobileMenuBtn" title="Toggle sidebar" aria-label="Toggle sidebar">
+                <button class="btn btn-secondary btn-icon mobile-menu-btn" id="mobileMenuBtn" title="Toggle sidebar" aria-label="Open edit tools" aria-expanded="false" aria-controls="sidebar">
                     <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                 </button>
                 <button class="btn btn-secondary" id="importBtn">
@@ -1003,7 +1003,7 @@
         <div class="main-content">
             <!-- Sidebar -->
             <div class="sidebar-overlay" id="sidebarOverlay"></div>
-            <aside class="sidebar" id="sidebar" aria-label="Edit tools">
+            <aside class="sidebar" id="sidebar" aria-label="Edit tools" tabindex="-1">
                 <!-- GIF Info -->
                 <div class="sidebar-section" id="gifInfoSection" style="display: none;">
                     <div class="sidebar-title">GIF Information</div>
@@ -1464,15 +1464,15 @@
                     </button>
                 </div>
             </div>
-            <div class="frames-container" id="framesContainer" role="listbox" aria-label="Animation frames">
+            <div class="frames-container" id="framesContainer" role="listbox" aria-label="Animation frames" aria-multiselectable="true">
                 <div class="empty-frames">No frames loaded</div>
             </div>
         </div>
     </div>
 
     <!-- Export Modal -->
-    <div class="modal-overlay" id="exportModal">
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+    <div class="modal-overlay" id="exportModal" aria-hidden="true" inert>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle" tabindex="-1">
             <div class="modal-title" id="exportModalTitle">Exporting GIF...</div>
             <div class="modal-body">
                 <div class="progress-container">
@@ -2155,6 +2155,7 @@
                 this.storageStatus = 'checking';
                 this._scriptLoads = new Map();
                 this.serviceWorkerStatus = 'not-available';
+                this._modalReturnFocus = null;
                 this._operationGeneration = 0;
                 this._activeOperation = null;
                 this._activeExportJob = null;
@@ -2899,7 +2900,7 @@
                     if (this._activeExportJob) {
                         this.cancelExportJob();
                     } else {
-                        document.getElementById('exportModal').classList.remove('active');
+                        this.closeExportModal();
                     }
                 });
 
@@ -2965,19 +2966,83 @@
 
                 const sidebar = document.getElementById('sidebar');
                 const overlay = document.getElementById('sidebarOverlay');
-                document.getElementById('mobileMenuBtn').addEventListener('click', () => {
-                    sidebar.classList.toggle('open');
-                    overlay.classList.toggle('active');
+                const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+                mobileMenuBtn.addEventListener('click', () => {
+                    this.setMobileDrawer(!sidebar.classList.contains('open'));
                 });
                 overlay.addEventListener('click', () => {
-                    sidebar.classList.remove('open');
-                    overlay.classList.remove('active');
+                    this.setMobileDrawer(false, true);
                 });
 
                 document.addEventListener('keydown', (e) => this.handleKeyboard(e));
 
                 // Paste from clipboard
                 document.addEventListener('paste', (e) => this.handlePaste(e));
+            }
+
+            setMobileDrawer(open, returnFocus = false) {
+                const sidebar = document.getElementById('sidebar');
+                const overlay = document.getElementById('sidebarOverlay');
+                const button = document.getElementById('mobileMenuBtn');
+                sidebar.classList.toggle('open', open);
+                overlay.classList.toggle('active', open);
+                button.setAttribute('aria-expanded', String(open));
+                button.setAttribute('aria-label', open ? 'Close edit tools' : 'Open edit tools');
+                if (open) {
+                    requestAnimationFrame(() => {
+                        const target = [...sidebar.querySelectorAll(
+                            'button:not([disabled]), input:not([disabled]), select:not([disabled])'
+                        )].find(element => element.offsetParent !== null);
+                        (target || sidebar).focus();
+                    });
+                } else if (returnFocus) {
+                    button.focus();
+                }
+            }
+
+            openExportModal(title, returnFocus = document.activeElement) {
+                const modal = document.getElementById('exportModal');
+                this._modalReturnFocus = returnFocus;
+                document.getElementById('exportModalTitle').textContent = title;
+                modal.removeAttribute('inert');
+                modal.classList.add('active');
+                modal.setAttribute('aria-hidden', 'false');
+                requestAnimationFrame(() => document.getElementById('cancelExportBtn').focus());
+            }
+
+            closeExportModal({ returnFocus = true } = {}) {
+                const modal = document.getElementById('exportModal');
+                modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
+                modal.setAttribute('inert', '');
+                if (returnFocus && this._modalReturnFocus?.isConnected) {
+                    this._modalReturnFocus.focus();
+                }
+                this._modalReturnFocus = null;
+            }
+
+            trapExportModalFocus(event) {
+                if (event.key !== 'Tab') return false;
+                const modal = document.getElementById('exportModal');
+                if (!modal.classList.contains('active')) return false;
+                const focusable = [...modal.querySelectorAll(
+                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                )].filter(element => element.offsetParent !== null);
+                if (focusable.length === 0) {
+                    event.preventDefault();
+                    modal.querySelector('[role="dialog"]').focus();
+                    return true;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+                return true;
             }
 
             // ============================================
@@ -3433,9 +3498,12 @@
                     item.className = 'frame-item' + (index === this.currentFrame ? ' selected' : '');
                     item.draggable = true;
                     item.dataset.index = index;
+                    item.id = `frame-option-${index}`;
                     item.setAttribute('role', 'option');
                     item.setAttribute('aria-selected', index === this.currentFrame ? 'true' : 'false');
                     item.setAttribute('aria-label', `Frame ${index + 1}, ${frame.delay}ms`);
+                    item.setAttribute('aria-posinset', String(index + 1));
+                    item.setAttribute('aria-setsize', String(this.frames.length));
                     item.tabIndex = index === this.currentFrame ? 0 : -1;
 
                     const thumb = document.createElement('canvas');
@@ -3450,6 +3518,8 @@
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'frame-delete';
                     deleteBtn.innerHTML = '×';
+                    deleteBtn.setAttribute('aria-label', `Delete frame ${index + 1}`);
+                    deleteBtn.tabIndex = -1;
                     deleteBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.deleteFrameAt(index);
@@ -3473,6 +3543,7 @@
                         }
                         this.goToFrame(index);
                     });
+                    item.addEventListener('keydown', event => this.handleTimelineKeydown(event, index));
 
                     item.addEventListener('dragstart', (e) => {
                         e.dataTransfer.setData('text/plain', index);
@@ -3499,14 +3570,47 @@
                     const isCurrent = index === this.currentFrame;
                     const isMultiSelected = this.selectedFrames.has(index);
                     item.classList.toggle('selected', isCurrent || isMultiSelected);
-                    item.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+                    item.setAttribute('aria-selected', isCurrent || isMultiSelected ? 'true' : 'false');
                     item.tabIndex = isCurrent ? 0 : -1;
                 });
+                this.framesContainer.setAttribute('aria-activedescendant', `frame-option-${this.currentFrame}`);
 
                 const selected = this.framesContainer.querySelector('.frame-item.selected');
                 if (selected) {
-                    selected.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    selected.scrollIntoView({
+                        behavior: this.isPlaying || reducedMotion ? 'auto' : 'smooth',
+                        inline: 'center',
+                        block: 'nearest'
+                    });
                 }
+            }
+
+            handleTimelineKeydown(event, index) {
+                let target = null;
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    target = Math.min(this.frames.length - 1, index + 1);
+                } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                    target = Math.max(0, index - 1);
+                } else if (event.key === 'Home') {
+                    target = 0;
+                } else if (event.key === 'End') {
+                    target = this.frames.length - 1;
+                } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.currentFrame = index;
+                    this.confirmCurrentFrameDelete();
+                    return;
+                }
+                if (target === null) return;
+                event.preventDefault();
+                event.stopPropagation();
+                this.selectedFrames.clear();
+                this.goToFrame(target);
+                requestAnimationFrame(() => {
+                    this.framesContainer.querySelector(`#frame-option-${target}`)?.focus();
+                });
             }
 
             // ============================================
@@ -3648,6 +3752,20 @@
                     return;
                 }
                 this.deleteFrameAt(this.currentFrame, true);
+            }
+
+            confirmCurrentFrameDelete() {
+                if (this.deleteConfirmPending) {
+                    clearTimeout(this.deleteConfirmTimer);
+                    this.deleteConfirmPending = false;
+                    this.deleteFrame();
+                } else {
+                    this.deleteConfirmPending = true;
+                    this.showToast('Press Delete again to confirm', 'warning');
+                    this.deleteConfirmTimer = setTimeout(() => {
+                        this.deleteConfirmPending = false;
+                    }, 2000);
+                }
             }
 
             deleteFrameAt(index, mutationPrepared = false) {
@@ -4340,6 +4458,7 @@
                     return null;
                 }
 
+                const returnFocus = document.activeElement;
                 this.stopPlayback();
                 const snapshotFrames = [];
                 try {
@@ -4366,6 +4485,7 @@
                     cancelled: false,
                     cancelReason: '',
                     encoder: null,
+                    returnFocus,
                     cancelSignal,
                     resolveCancel
                 };
@@ -4448,10 +4568,9 @@
                 }
                 if (!job) return;
 
-                const modal = document.getElementById('exportModal');
                 const progress = document.getElementById('exportProgress');
                 const status = document.getElementById('exportStatus');
-                modal.classList.add('active');
+                this.openExportModal('Exporting GIF...', job.returnFocus);
                 progress.style.width = '0%';
                 status.textContent = 'Preparing frames...';
 
@@ -4555,8 +4674,8 @@
                     }
                 } finally {
                     progress.classList.remove('encoding');
-                    modal.classList.remove('active');
                     this.finishExportJob(job);
+                    this.closeExportModal();
                 }
             }
 
@@ -4610,10 +4729,9 @@
                 }
                 if (!job) return;
 
-                const modal = document.getElementById('exportModal');
                 const progress = document.getElementById('exportProgress');
                 const status = document.getElementById('exportStatus');
-                modal.classList.add('active');
+                this.openExportModal('Exporting APNG...', job.returnFocus);
                 progress.style.width = '0%';
                 status.textContent = 'Loading APNG encoder...';
 
@@ -4696,8 +4814,8 @@
                     }
                 } finally {
                     progress.classList.remove('encoding');
-                    modal.classList.remove('active');
                     this.finishExportJob(job);
+                    this.closeExportModal();
                 }
             }
 
@@ -5141,14 +5259,21 @@
             }
 
             handleKeyboard(e) {
+                if (this.trapExportModalFocus(e)) return;
                 if (e.key === 'Escape') {
                     const modal = document.getElementById('exportModal');
                     if (modal.classList.contains('active')) {
+                        e.preventDefault();
                         if (this._activeExportJob) {
                             this.cancelExportJob();
                         } else {
-                            modal.classList.remove('active');
+                            this.closeExportModal();
                         }
+                        return;
+                    }
+                    if (document.getElementById('sidebar').classList.contains('open')) {
+                        e.preventDefault();
+                        this.setMobileDrawer(false, true);
                         return;
                     }
                 }
@@ -5171,17 +5296,7 @@
                     case 'Delete':
                     case 'Backspace':
                         e.preventDefault();
-                        if (this.deleteConfirmPending) {
-                            clearTimeout(this.deleteConfirmTimer);
-                            this.deleteConfirmPending = false;
-                            this.deleteFrame();
-                        } else {
-                            this.deleteConfirmPending = true;
-                            this.showToast('Press Delete again to confirm', 'warning');
-                            this.deleteConfirmTimer = setTimeout(() => {
-                                this.deleteConfirmPending = false;
-                            }, 2000);
-                        }
+                        this.confirmCurrentFrameDelete();
                         break;
                     case 'z':
                         if (e.ctrlKey || e.metaKey) {
