@@ -629,17 +629,18 @@
                 document.getElementById('recoveryBanner')?.remove();
                 const banner = document.createElement('div');
                 banner.id = 'recoveryBanner';
+                banner.className = 'recovery-banner';
                 banner.setAttribute('role', 'region');
                 banner.setAttribute('aria-label', 'Saved session recovery');
                 banner.setAttribute('aria-live', 'polite');
-                banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:1500;background:var(--bg-elevated);border:1px solid var(--accent-primary);border-radius:var(--radius-md);padding:12px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-lg);font-size:13px;max-width:90vw;';
                 const message = document.createElement('span');
-                message.style.color = 'var(--text-secondary)';
+                message.className = 'recovery-message';
                 message.textContent = `Recover previous session? (${session.frames.length} frames, ${timeAgo}). Saved locally until dismissed or seven days old.`;
                 banner.appendChild(message);
+                const actions = document.createElement('div');
+                actions.className = 'recovery-actions';
                 const restoreBtn = document.createElement('button');
                 restoreBtn.className = 'btn btn-primary';
-                restoreBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
                 restoreBtn.textContent = 'Restore';
                 restoreBtn.onclick = async () => {
                     banner.remove();
@@ -648,15 +649,15 @@
                 };
                 const dismissBtn = document.createElement('button');
                 dismissBtn.className = 'btn btn-ghost';
-                dismissBtn.style.cssText = 'padding:6px 14px;font-size:12px;';
                 dismissBtn.textContent = 'Dismiss';
                 dismissBtn.onclick = async () => {
                     banner.remove();
                     await this.clearSavedSession();
                     document.getElementById('importBtn').focus();
                 };
-                banner.appendChild(restoreBtn);
-                banner.appendChild(dismissBtn);
+                actions.appendChild(restoreBtn);
+                actions.appendChild(dismissBtn);
+                banner.appendChild(actions);
                 document.body.appendChild(banner);
             }
 
@@ -867,6 +868,7 @@
             bindEvents() {
                 // File handling
                 document.getElementById('importBtn').addEventListener('click', () => this.fileInput.click());
+                document.getElementById('chooseFilesBtn').addEventListener('click', () => this.fileInput.click());
                 this.fileInput.addEventListener('change', (e) => {
                     const files = Array.from(e.target.files);
                     if (files.length === 1 && files[0].type === 'image/gif') {

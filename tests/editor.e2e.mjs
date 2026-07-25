@@ -78,7 +78,7 @@ test('shipped page boots without console or uncaught errors', async ({ page }) =
   await page.reload({ waitUntil: 'networkidle' });
 
   expect(errors).toEqual([]);
-  await expect(page.getByRole('heading', { name: 'Drop files here' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Drop a GIF or image sequence' })).toBeVisible();
 });
 
 test('diagnostics copy capability state and sanitized errors without media identifiers', async ({ page }) => {
@@ -483,7 +483,7 @@ test('service worker caches the app shell for offline reload and exposes update 
 
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect(page.getByRole('heading', { name: 'Drop files here' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Drop a GIF or image sequence' })).toBeVisible();
   await context.setOffline(false);
 
   await page.evaluate(() => {
