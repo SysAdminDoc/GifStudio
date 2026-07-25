@@ -1348,6 +1348,17 @@
                     <div class="sidebar-title">Frame Inspector</div>
                     <div id="analyzerContent" style="max-height: 200px; overflow-y: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.6;"></div>
                 </div>
+
+                <!-- Local Diagnostics -->
+                <div class="sidebar-section" id="diagnosticsSection">
+                    <div class="sidebar-title">Diagnostics</div>
+                    <p id="diagnosticsDescription" style="font-size:11px;color:var(--text-muted);line-height:1.5;margin:0 0 8px;">
+                        Copies capability and error text only—never frames, filenames, URLs, or telemetry.
+                    </p>
+                    <button class="btn btn-secondary" id="copyDiagnosticsBtn" aria-describedby="diagnosticsDescription" style="width:100%;">
+                        Copy Diagnostics
+                    </button>
+                </div>
             </aside>
 
             <!-- Canvas Area -->
@@ -2178,6 +2189,7 @@
                 this._exportGeneration = 0;
                 this._projectGeneration = 0;
                 this.sourceTiming = null;
+                this.lastDiagnosticError = null;
                 this.memoryTelemetry = {
                     peakEstimatedBytes: 0,
                     lastEstimate: null,
@@ -3084,6 +3096,7 @@
                     else this.exportGIF();
                 });
                 document.getElementById('splitFramesBtn').addEventListener('click', () => this.splitFramesToPNG());
+                document.getElementById('copyDiagnosticsBtn').addEventListener('click', () => this.copyDiagnostics());
                 document.getElementById('shareBtn').addEventListener('click', async () => {
                     if (this.lastExportFile) {
                         try { await navigator.share({ files: [this.lastExportFile] }); } catch {}
@@ -5783,7 +5796,104 @@
                 return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
             }
 
+            sanitizeDiagnosticText(message) {
+                return String(message || 'Unknown error')
+                    .replace(/https?:\/\/\S+/gi, '[url]')
+                    .replace(/(?:[A-Za-z]:)?[\\/](?:[^\s"'<>]+[\\/])*[^\s"'<>]*/g, '[path]')
+                    .replace(/\b[^\s<>:"/\\|?*]+\.(?:gif|png|jpe?g|webp|apng|zip)\b/gi, '[file]')
+                    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .slice(0, 300);
+            }
+
+            recordDiagnosticError(message, surface = 'application') {
+                this.lastDiagnosticError = {
+                    surface,
+                    message: this.sanitizeDiagnosticText(message),
+                    recordedAt: new Date().toISOString()
+                };
+            }
+
+            buildDiagnosticsReport() {
+                const yesNo = value => value ? 'yes' : 'no';
+                const hasProject = this.frames.length > 0;
+                const memory = this.memoryTelemetry.lastEstimate;
+                const output = this.lastOutputValidation;
+                const profile = this.lastExportProfile;
+                const nativeDecoder = typeof ImageDecoder !== 'undefined';
+                const filePicker = typeof window.showSaveFilePicker === 'function';
+                const fileShare = typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
+                const clipboard = Boolean(navigator.clipboard?.writeText && window.isSecureContext);
+
+                return [
+                    'GifStudio diagnostics',
+                    `Generated: ${new Date().toISOString()}`,
+                    `App version: ${APP_VERSION}`,
+                    `Project loaded: ${yesNo(hasProject)}`,
+                    `Dimensions: ${hasProject ? `${this.originalWidth}x${this.originalHeight}` : 'none'}`,
+                    `Frame count: ${this.frames.length}`,
+                    `Selected format: ${this.getExportFormat().toUpperCase()}`,
+                    `Source metadata: ${!hasProject ? 'none' : this.rawGifMeta ? 'raw GIF blocks available' : 'decoded frames only'}`,
+                    `Validated output: ${output
+                        ? `${output.format}, ${output.width}x${output.height}, ${output.frameCount} frames, ${Math.round(output.duration)}ms, ${output.bytes} bytes`
+                        : 'none'}`,
+                    `Memory last estimate: ${memory
+                        ? `${memory.operation}, raw ${memory.rawFrameBytes} bytes, temporary ${memory.temporaryBytes} bytes, peak ${memory.estimatedPeakBytes} bytes`
+                        : 'none'}`,
+                    `Memory highest estimate: ${this.memoryTelemetry.peakEstimatedBytes} bytes`,
+                    `Memory overrides: ${this.memoryTelemetry.overrideCount}`,
+                    `Last export profile: ${profile
+                        ? `${profile.kind}, ${profile.durationMs}ms total, ${profile.maxFrameBlockMs}ms max block, cancelled ${yesNo(profile.cancelled)}`
+                        : 'none'}`,
+                    '',
+                    'Capabilities and fallbacks',
+                    `ImageDecoder: ${yesNo(nativeDecoder)} (${nativeDecoder ? 'preferred GIF decoder' : 'strict JavaScript GIF decoder fallback'})`,
+                    `File System Access: ${yesNo(filePicker)} (${filePicker ? 'direct save' : 'download fallback'})`,
+                    `File sharing: ${yesNo(fileShare)} (${fileShare ? 'share button after compatible GIF export' : 'share control hidden'})`,
+                    `Clipboard write: ${yesNo(clipboard)} (${clipboard ? 'async clipboard' : 'temporary text selection fallback'})`,
+                    `Service worker API: ${yesNo('serviceWorker' in navigator)}`,
+                    `Service worker state: ${this.serviceWorkerStatus}`,
+                    `Offline cache controlled: ${yesNo(Boolean(navigator.serviceWorker?.controller))}`,
+                    `Recovery storage: ${this.storageStatus}`,
+                    `IndexedDB: ${yesNo('indexedDB' in window)}`,
+                    `WebAssembly: ${yesNo(typeof WebAssembly !== 'undefined')}`,
+                    `Cross-origin isolated: ${yesNo(window.crossOriginIsolated)}`,
+                    `Online: ${yesNo(navigator.onLine)}`,
+                    `Bundled pako loaded: ${yesNo(Boolean(window.pako))}`,
+                    `Bundled UPNG loaded: ${yesNo(Boolean(window.UPNG))}`,
+                    `Bundled gifsicle loaded: ${yesNo(Boolean(window.gifsicle))}`,
+                    '',
+                    `Last error: ${this.lastDiagnosticError
+                        ? `${this.lastDiagnosticError.surface} at ${this.lastDiagnosticError.recordedAt}: ${this.lastDiagnosticError.message}`
+                        : 'none'}`,
+                    'Privacy: report excludes frame pixels, thumbnails, filenames, source URLs, user agent, and telemetry.'
+                ].join('\n');
+            }
+
+            async copyDiagnostics() {
+                const report = this.buildDiagnosticsReport();
+                try {
+                    if (navigator.clipboard?.writeText && window.isSecureContext) {
+                        await navigator.clipboard.writeText(report);
+                    } else {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = report;
+                        textarea.setAttribute('readonly', '');
+                        textarea.style.cssText = 'position:fixed;left:-9999px;top:0;';
+                        document.body.appendChild(textarea);
+                        textarea.select();
+                        if (!document.execCommand('copy')) throw new Error('Browser denied text copy');
+                        textarea.remove();
+                    }
+                    this.showToast('Diagnostics copied without media or filenames', 'success');
+                } catch (error) {
+                    this.showToast('Could not copy diagnostics: ' + error.message, 'error');
+                }
+            }
+
             showToast(message, type = 'info') {
+                if (type === 'error') this.recordDiagnosticError(message);
                 const container = document.getElementById('toastContainer');
                 const toast = document.createElement('div');
                 toast.className = 'toast ' + type;
@@ -5933,6 +6043,7 @@
                 });
             } catch (error) {
                 editorInstance.serviceWorkerStatus = 'error';
+                editorInstance.recordDiagnosticError(error.message, 'service-worker');
                 console.error('Service worker registration failed:', error);
                 editorInstance.showToast('Offline caching is unavailable; the network editor remains usable.', 'warning');
             }

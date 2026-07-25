@@ -47,6 +47,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Lazy Thumbnails** — Timeline uses IntersectionObserver + CSS content-visibility for smooth scrolling
 - **Safari Memory Safety** — Explicit canvas cleanup prevents memory leaks on WebKit browsers
 - **Vendored Fonts** — All fonts inlined as base64 woff2; zero external requests
+- **Local Diagnostics** — Copy app/capability/fallback, memory, export-profile, and sanitized error text without frames, filenames, URLs, user-agent data, or telemetry
 
 ### Accessibility & Mobile
 - **ARIA Support** — Screen reader roles on canvas, timeline, modal, toast, and sidebar
@@ -69,6 +70,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Split-frame ZIP | PNG splitting uses the shared progress/cancel flow, checks serialization and CRCs, and stops before allocation above 500 entries or a 512 MiB estimated/actual ZIP. Output basenames are normalized for cross-platform filesystems. |
 | Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
 | Recovery | A versioned IndexedDB session is retained for up to seven days or until dismissed. Superseded saves are aborted; storage failures advise exporting before leaving the tab. |
+| Diagnostics | The sidebar report identifies decoder/save/share/clipboard/service-worker/storage/codec fallbacks and the last sanitized error. It contains project dimensions/count but excludes media, filenames, URLs, user-agent data, and telemetry. |
 
 GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 changed-region encoder was superseded by gifenc in v0.4.0 because safe local-frame encoding needs look-ahead disposal handling for opaque-to-transparent transitions. The bundled optimizer remains the supported size-reduction path.
 

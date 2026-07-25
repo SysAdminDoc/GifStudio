@@ -81,6 +81,42 @@ test('shipped page boots without console or uncaught errors', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Drop files here' })).toBeVisible();
 });
 
+test('diagnostics copy capability state and sanitized errors without media identifiers', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile('private-source.gif'));
+  await page.locator('#fileInput').setInputFiles({
+    name: 'patient-secret.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('not a png')
+  });
+  await expect(page.locator('.toast.error')).toContainText('Failed to load patient-secret.png');
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async text => {
+          window.__copiedDiagnostics = text;
+        }
+      }
+    });
+  });
+
+  await page.locator('#copyDiagnosticsBtn').click();
+  await expect(page.locator('.toast.success').last()).toContainText('Diagnostics copied without media or filenames');
+  const report = await page.evaluate(() => window.__copiedDiagnostics);
+
+  expect(report).toContain('App version: 0.5.2');
+  expect(report).toContain('Dimensions: 1x1');
+  expect(report).toContain('Frame count: 1');
+  expect(report).toContain('Selected format: GIF');
+  expect(report).toContain('Capabilities and fallbacks');
+  expect(report).toContain('Last error: application');
+  expect(report).toContain('Failed to load [file]');
+  expect(report).toContain('report excludes frame pixels');
+  expect(report).not.toContain('patient-secret.png');
+  expect(report).not.toContain('private-source.gif');
+  expect(report).not.toContain(BASIC_GIF.toString('base64'));
+});
+
 test('failed replacement import preserves the active project', async ({ page }) => {
   const input = page.locator('#fileInput');
   await input.setInputFiles(gifFile());
@@ -627,7 +663,7 @@ test('mobile drawer reports state, restores focus, and fits 390px', async ({ pag
   await menu.click();
   await expect(menu).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#sidebar')).toHaveClass(/open/);
-  await expect(page.locator('#sidebar')).toBeFocused();
+  await expect(page.locator('#copyDiagnosticsBtn')).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
