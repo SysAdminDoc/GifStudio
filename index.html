@@ -2052,7 +2052,6 @@
 
         render(onProgress) {
             return new Promise((resolve, reject) => {
-                this.aborted = false;
                 const frames = this.frames;
                 const w = this.width, h = this.height;
                 const maxColors = this.maxColors;
@@ -2069,7 +2068,7 @@
                     }
 
                     const frame = frames[frameIdx];
-                    if (onProgress) onProgress(frameIdx / frames.length);
+                    const frameStartedAt = performance.now();
 
                     const rgba = new Uint8Array(frame.data.buffer.slice(0));
                     const roundRGB = this.getPrequantizeRoundRGB();
@@ -2089,6 +2088,12 @@
                     });
 
                     frameIdx++;
+                    if (onProgress) {
+                        onProgress(frameIdx / frames.length, {
+                            frameIndex: frameIdx - 1,
+                            durationMs: performance.now() - frameStartedAt
+                        });
+                    }
                     setTimeout(processFrame, 0);
                 };
 
@@ -2122,6 +2127,11 @@
                 this.currentEncoder = null;
                 this._loadInProgress = false;
                 this._autosaveGeneration = 0;
+                this._operationGeneration = 0;
+                this._activeOperation = null;
+                this._activeExportJob = null;
+                this._exportGeneration = 0;
+                this._projectGeneration = 0;
 
                 // Crop state
                 this.cropRect = { x: 0, y: 0, w: 100, h: 100 };
@@ -2156,6 +2166,90 @@
                 this.bindEvents();
                 this.setActiveTool('select');
                 this.checkSessionRecovery();
+            }
+
+            beginOperation(kind) {
+                if (this._activeOperation) {
+                    this.showToast(`${this._activeOperation.kind} is already in progress`, 'warning');
+                    return null;
+                }
+                if (this._activeExportJob) {
+                    this.cancelExportJob('A new project operation started');
+                }
+                this.stopPlayback();
+                const token = {
+                    id: ++this._operationGeneration,
+                    kind,
+                    cancelled: false
+                };
+                this._activeOperation = token;
+                this._loadInProgress = true;
+                return token;
+            }
+
+            isOperationCurrent(token) {
+                return !!token &&
+                    !token.cancelled &&
+                    this._activeOperation === token &&
+                    token.id === this._operationGeneration;
+            }
+
+            assertOperationCurrent(token) {
+                if (!this.isOperationCurrent(token)) {
+                    const error = new Error('Operation cancelled');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+            }
+
+            finishOperation(token) {
+                if (this._activeOperation !== token) return;
+                token.cancelled = true;
+                this._activeOperation = null;
+                this._loadInProgress = false;
+            }
+
+            prepareMutation() {
+                if (this._activeOperation) {
+                    this.showToast(`Wait for ${this._activeOperation.kind} to finish`, 'warning');
+                    return false;
+                }
+                if (this._activeExportJob) {
+                    this.showToast('Cancel the active export before editing', 'warning');
+                    return false;
+                }
+                this.stopPlayback();
+                this._projectGeneration++;
+                return true;
+            }
+
+            releaseFrames(frames) {
+                if (!frames) return;
+                frames.forEach(frame => this.releaseCanvas(frame.canvas));
+            }
+
+            commitProject(project, token) {
+                this.assertOperationCurrent(token);
+                const previousFrames = this.frames;
+                this.clearUndoHistory();
+                this.frames = project.frames;
+                this.originalWidth = project.width;
+                this.originalHeight = project.height;
+                this.currentFrame = Math.min(project.currentFrame || 0, this.frames.length - 1);
+                this.originalFilename = project.filename || 'edited';
+                this.fileSize = project.fileSize || 0;
+                this.rawGifMeta = project.rawGifMeta || null;
+                this.cropRect = { x: 0, y: 0, w: project.width, h: project.height };
+                this.selectedFrames.clear();
+                this._projectGeneration++;
+                this.releaseFrames(previousFrames);
+
+                const filenameInput = document.getElementById('exportFilename');
+                if (filenameInput) {
+                    filenameInput.value = project.exportFilename || `${this.originalFilename}-edited`;
+                }
+                this.showEditor();
+                this.scheduleAutosave();
             }
 
             // ============================================
@@ -2279,32 +2373,47 @@
             }
 
             async restoreSession(session) {
-                this.clearUndoHistory();
-                this.frames = [];
-                this.originalWidth = session.width;
-                this.originalHeight = session.height;
-                this.originalFilename = session.filename || 'recovered';
-                this.rawGifMeta = null;
+                const token = this.beginOperation('Session restore');
+                if (!token) return;
+                const restoredFrames = [];
+                try {
+                    GifDecoder.validateBudget(session.width, session.height, session.frames?.length || 0);
+                    for (const fd of session.frames) {
+                        this.assertOperationCurrent(token);
+                        const blob = new Blob([fd.png], { type: 'image/png' });
+                        const img = await new Promise((resolve, reject) => {
+                            const i = new Image();
+                            i.onload = () => { URL.revokeObjectURL(i.src); resolve(i); };
+                            i.onerror = () => { URL.revokeObjectURL(i.src); reject(new Error('Failed to load recovery frame')); };
+                            i.src = URL.createObjectURL(blob);
+                        });
+                        this.assertOperationCurrent(token);
+                        const c = document.createElement('canvas');
+                        c.width = session.width;
+                        c.height = session.height;
+                        c.getContext('2d').drawImage(img, 0, 0);
+                        restoredFrames.push({ canvas: c, delay: fd.delay, disposalType: fd.disposalType || 0 });
+                    }
 
-                for (const fd of session.frames) {
-                    const blob = new Blob([fd.png], { type: 'image/png' });
-                    const img = await new Promise((resolve, reject) => {
-                        const i = new Image();
-                        i.onload = () => { URL.revokeObjectURL(i.src); resolve(i); };
-                        i.onerror = () => { URL.revokeObjectURL(i.src); reject(new Error('Failed to load frame')); };
-                        i.src = URL.createObjectURL(blob);
-                    });
-                    const c = document.createElement('canvas');
-                    c.width = session.width;
-                    c.height = session.height;
-                    c.getContext('2d').drawImage(img, 0, 0);
-                    this.frames.push({ canvas: c, delay: fd.delay, disposalType: fd.disposalType || 0 });
+                    this.commitProject({
+                        frames: restoredFrames,
+                        width: session.width,
+                        height: session.height,
+                        currentFrame: session.currentFrame,
+                        filename: session.filename || 'recovered',
+                        rawGifMeta: null,
+                        exportFilename: `${session.filename || 'recovered'}-edited`
+                    }, token);
+                    this.showToast(`Restored ${restoredFrames.length} frames`, 'success');
+                } catch (error) {
+                    this.releaseFrames(restoredFrames);
+                    if (error.name !== 'AbortError') {
+                        console.error('Session restore failed:', error);
+                        this.showToast('Recovery failed: ' + error.message, 'error');
+                    }
+                } finally {
+                    this.finishOperation(token);
                 }
-
-                this.currentFrame = Math.min(session.currentFrame || 0, this.frames.length - 1);
-                this.selectedFrames.clear();
-                this.showEditor();
-                this.showToast(`Restored ${this.frames.length} frames`, 'success');
             }
 
             async clearSavedSession() {
@@ -2373,6 +2482,7 @@
 
             undo() {
                 if (this.undoStack.length === 0) return;
+                if (!this.prepareMutation()) return;
                 // Save current state to redo stack
                 const currentState = {
                     label: 'redo',
@@ -2398,6 +2508,7 @@
 
             redo() {
                 if (this.redoStack.length === 0) return;
+                if (!this.prepareMutation()) return;
                 // Save current state to undo stack
                 const currentState = {
                     label: 'undo',
@@ -2557,10 +2668,11 @@
                     }
                 });
                 document.getElementById('cancelExportBtn').addEventListener('click', () => {
-                    if (this.currentEncoder) this.currentEncoder.abort();
-                    document.getElementById('exportProgress').classList.remove('encoding');
-                    document.getElementById('exportModal').classList.remove('active');
-                    this.showToast('Export cancelled', 'warning');
+                    if (this._activeExportJob) {
+                        this.cancelExportJob();
+                    } else {
+                        document.getElementById('exportModal').classList.remove('active');
+                    }
                 });
 
                 // Filters
@@ -2644,46 +2756,37 @@
             // File Loading
             // ============================================
 
+            setParseBusy(busy) {
+                document.getElementById('dropIcon').style.display = busy ? 'none' : '';
+                document.getElementById('dropText').style.display = busy ? 'none' : '';
+                document.getElementById('parseSpinner').style.display = busy ? 'flex' : 'none';
+            }
+
             async handleFileSelect(file) {
                 this.fileInput.value = '';
                 if (!file || file.type !== 'image/gif') {
                     this.showToast('Please select a valid GIF file', 'error');
                     return;
                 }
-                if (this._loadInProgress) {
-                    this.showToast('A file is already loading. Wait for it to finish.', 'warning');
-                    return;
-                }
-                this._loadInProgress = true;
-
-                this.stopPlayback();
-                this.selectedFrames.clear();
-                this.fileSize = file.size;
-                this.clearUndoHistory();
-
-                // Store original filename (strip extension)
-                this.originalFilename = file.name.replace(/\.gif$/i, '') || 'edited';
-                const filenameInput = document.getElementById('exportFilename');
-                if (filenameInput) filenameInput.value = this.originalFilename + '-edited';
-
-                // Show parse spinner
-                document.getElementById('dropIcon').style.display = 'none';
-                document.getElementById('dropText').style.display = 'none';
-                document.getElementById('parseSpinner').style.display = 'flex';
+                const token = this.beginOperation('GIF import');
+                if (!token) return;
+                this.setParseBusy(true);
+                let project = null;
 
                 try {
                     const buffer = await file.arrayBuffer();
-                    let usedNativeDecoder = false;
+                    this.assertOperationCurrent(token);
 
                     if (typeof ImageDecoder !== 'undefined') {
                         try {
-                            usedNativeDecoder = await this.decodeWithImageDecoder(buffer);
-                        } catch {
-                            usedNativeDecoder = false;
+                            project = await this.decodeWithImageDecoder(buffer, token);
+                        } catch (error) {
+                            if (error.name === 'AbortError') throw error;
+                            project = null;
                         }
                     }
 
-                    if (!usedNativeDecoder) {
+                    if (!project) {
                         const gif = GifDecoder.parseGIF(buffer);
                         const gifW = gif.width, gifH = gif.height;
                         const budget = GifDecoder.validateBudget(gifW, gifH, gif.frames.length);
@@ -2694,7 +2797,7 @@
                             this.showToast(`Warning: decoded frames require about ${this.formatBytes(budget.decodedBytes)}`, 'warning');
                         }
 
-                        this.rawGifMeta = gif.frames.map((f, i) => ({
+                        const rawGifMeta = gif.frames.map((f, i) => ({
                             index: i + 1,
                             left: f.left, top: f.top, width: f.width, height: f.height,
                             interlaced: f.interlaced,
@@ -2705,29 +2808,36 @@
                         }));
 
                         const frames = GifDecoder.decompressFrames(gif, true);
-                        this.loadFrames(frames);
+                        project = this.composeFrames(frames);
+                        project.rawGifMeta = rawGifMeta;
                     }
 
-                    if (this.frames.length === 0) {
+                    this.assertOperationCurrent(token);
+                    if (!project || project.frames.length === 0) {
                         throw new Error('No frames found in GIF');
                     }
-                    this.showEditor();
-                    this.scheduleAutosave();
-                    this.showToast(`Loaded ${this.frames.length} frames`, 'success');
+                    const filename = file.name.replace(/\.gif$/i, '') || 'edited';
+                    project.filename = filename;
+                    project.fileSize = file.size;
+                    project.exportFilename = `${filename}-edited`;
+                    this.commitProject(project, token);
+                    const frameCount = project.frames.length;
+                    project = null;
+                    this.showToast(`Loaded ${frameCount} frames`, 'success');
 
                 } catch (error) {
-                    console.error('Error loading GIF:', error);
-                    this.showToast('Failed to load GIF: ' + error.message, 'error');
-                    // Reset spinner
-                    document.getElementById('dropIcon').style.display = '';
-                    document.getElementById('dropText').style.display = '';
-                    document.getElementById('parseSpinner').style.display = 'none';
+                    if (project) this.releaseFrames(project.frames);
+                    if (error.name !== 'AbortError') {
+                        console.error('Error loading GIF:', error);
+                        this.showToast('Failed to load GIF: ' + error.message, 'error');
+                    }
                 } finally {
-                    this._loadInProgress = false;
+                    this.setParseBusy(false);
+                    this.finishOperation(token);
                 }
             }
 
-            async decodeWithImageDecoder(buffer) {
+            async decodeWithImageDecoder(buffer, token) {
                 let decoder = null;
                 const decodedFrames = [];
                 try {
@@ -2742,9 +2852,11 @@
                     let height = 0;
 
                     for (let i = 0; i < frameCount; i++) {
+                        this.assertOperationCurrent(token);
                         const result = await decoder.decode({ frameIndex: i, completeFramesOnly: true });
                         const vf = result.image;
                         try {
+                            this.assertOperationCurrent(token);
                             if (i === 0) {
                                 width = vf.displayWidth;
                                 height = vf.displayHeight;
@@ -2765,12 +2877,13 @@
                     }
 
                     if (decodedFrames.length === 0) return false;
-                    this.frames = decodedFrames;
-                    this.rawGifMeta = null;
-                    this.originalWidth = width;
-                    this.originalHeight = height;
-                    this.currentFrame = 0;
-                    return true;
+                    return {
+                        frames: decodedFrames,
+                        width,
+                        height,
+                        currentFrame: 0,
+                        rawGifMeta: null
+                    };
                 } catch (error) {
                     decodedFrames.forEach(frame => this.releaseCanvas(frame.canvas));
                     throw error;
@@ -2786,16 +2899,10 @@
                     this.showToast('No valid image files found', 'error');
                     return;
                 }
-                if (this._loadInProgress) {
-                    this.showToast('A file is already loading. Wait for it to finish.', 'warning');
-                    return;
-                }
-                this._loadInProgress = true;
-                this.clearUndoHistory();
-
-                document.getElementById('dropIcon').style.display = 'none';
-                document.getElementById('dropText').style.display = 'none';
-                document.getElementById('parseSpinner').style.display = 'flex';
+                const token = this.beginOperation('Image import');
+                if (!token) return;
+                this.setParseBusy(true);
+                let projectFrames = [];
 
                 try {
                     const loadImage = (file) => new Promise((resolve, reject) => {
@@ -2806,19 +2913,13 @@
                     });
 
                     const images = await Promise.all(imageFiles.map(loadImage));
+                    this.assertOperationCurrent(token);
                     const maxW = Math.max(...images.map(i => i.naturalWidth));
                     const maxH = Math.max(...images.map(i => i.naturalHeight));
-
-                    this.originalWidth = maxW;
-                    this.originalHeight = maxH;
-                    this.frames = [];
-                    this.rawGifMeta = null;
-                    this.fileSize = imageFiles.reduce((s, f) => s + f.size, 0);
-                    this.originalFilename = imageFiles[0].name.replace(/\.[^.]+$/, '') || 'sequence';
-                    const filenameInput = document.getElementById('exportFilename');
-                    if (filenameInput) filenameInput.value = this.originalFilename + '-animated';
+                    GifDecoder.validateBudget(maxW, maxH, images.length);
 
                     images.forEach(img => {
+                        this.assertOperationCurrent(token);
                         const c = document.createElement('canvas');
                         c.width = maxW;
                         c.height = maxH;
@@ -2827,22 +2928,31 @@
                         const w = img.naturalWidth * scale;
                         const h = img.naturalHeight * scale;
                         ctx.drawImage(img, (maxW - w) / 2, (maxH - h) / 2, w, h);
-                        this.frames.push({ canvas: c, delay: 100, disposalType: 0 });
+                        projectFrames.push({ canvas: c, delay: 100, disposalType: 0 });
                     });
 
-                    this.currentFrame = 0;
-                    this.selectedFrames.clear();
-                    this.showEditor();
-                    this.scheduleAutosave();
+                    const filename = imageFiles[0].name.replace(/\.[^.]+$/, '') || 'sequence';
+                    this.commitProject({
+                        frames: projectFrames,
+                        width: maxW,
+                        height: maxH,
+                        currentFrame: 0,
+                        rawGifMeta: null,
+                        fileSize: imageFiles.reduce((sum, item) => sum + item.size, 0),
+                        filename,
+                        exportFilename: `${filename}-animated`
+                    }, token);
+                    projectFrames = [];
                     this.showToast(`Created GIF from ${images.length} images`, 'success');
                 } catch (error) {
-                    console.error('Error loading images:', error);
-                    this.showToast('Failed to load images: ' + error.message, 'error');
-                    document.getElementById('dropIcon').style.display = '';
-                    document.getElementById('dropText').style.display = '';
-                    document.getElementById('parseSpinner').style.display = 'none';
+                    this.releaseFrames(projectFrames);
+                    if (error.name !== 'AbortError') {
+                        console.error('Error loading images:', error);
+                        this.showToast('Failed to load images: ' + error.message, 'error');
+                    }
                 } finally {
-                    this._loadInProgress = false;
+                    this.setParseBusy(false);
+                    this.finishOperation(token);
                 }
             }
 
@@ -2864,16 +2974,19 @@
                 if (imageItems.length === 1 && imageItems[0].type === 'image/gif') {
                     this.handleFileSelect(imageItems[0]);
                 } else if (this.frames.length > 0) {
-                    // Add pasted images as new frames to existing project
-                    this.saveUndoState('Paste frames');
+                    const token = this.beginOperation('Paste');
+                    if (!token) return;
+                    const pastedFrames = [];
                     try {
                         for (const file of imageItems) {
+                            this.assertOperationCurrent(token);
                             const img = await new Promise((resolve, reject) => {
                                 const i = new Image();
                                 i.onload = () => { URL.revokeObjectURL(i.src); resolve(i); };
                                 i.onerror = () => { URL.revokeObjectURL(i.src); reject(new Error('Failed to load pasted image')); };
                                 i.src = URL.createObjectURL(file);
                             });
+                            this.assertOperationCurrent(token);
                             const c = document.createElement('canvas');
                             c.width = this.originalWidth;
                             c.height = this.originalHeight;
@@ -2882,13 +2995,28 @@
                             const w = img.naturalWidth * scale;
                             const h = img.naturalHeight * scale;
                             ctx.drawImage(img, (this.originalWidth - w) / 2, (this.originalHeight - h) / 2, w, h);
-                            this.frames.splice(this.currentFrame + 1, 0, { canvas: c, delay: 100, disposalType: 0 });
+                            pastedFrames.push({ canvas: c, delay: 100, disposalType: 0 });
                         }
+                        GifDecoder.validateBudget(
+                            this.originalWidth,
+                            this.originalHeight,
+                            this.frames.length + pastedFrames.length
+                        );
+                        this.assertOperationCurrent(token);
+                        this.saveUndoState('Paste frames');
+                        this.frames.splice(this.currentFrame + 1, 0, ...pastedFrames);
+                        this._projectGeneration++;
                         this.renderTimeline();
                         this.goToFrame(this.currentFrame + 1);
                         this.showToast(`Pasted ${imageItems.length} frame${imageItems.length > 1 ? 's' : ''}`, 'success');
+                        pastedFrames.length = 0;
                     } catch (err) {
-                        this.showToast('Failed to paste image: ' + err.message, 'error');
+                        this.releaseFrames(pastedFrames);
+                        if (err.name !== 'AbortError') {
+                            this.showToast('Failed to paste image: ' + err.message, 'error');
+                        }
+                    } finally {
+                        this.finishOperation(token);
                     }
                 } else {
                     // No existing project — create from pasted images
@@ -2908,77 +3036,75 @@
                 if (url) URL.revokeObjectURL(url);
             }
 
-            loadFrames(rawFrames) {
-                this.frames = [];
-
+            composeFrames(rawFrames) {
                 let maxWidth = 0, maxHeight = 0;
                 rawFrames.forEach(f => {
                     maxWidth = Math.max(maxWidth, f.dims.left + f.dims.width);
                     maxHeight = Math.max(maxHeight, f.dims.top + f.dims.height);
                 });
-                this.originalWidth = maxWidth;
-                this.originalHeight = maxHeight;
+                GifDecoder.validateBudget(maxWidth, maxHeight, rawFrames.length);
+                const composedFrames = [];
 
                 // Create a temp canvas for compositing
                 const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = this.originalWidth;
-                tempCanvas.height = this.originalHeight;
+                tempCanvas.width = maxWidth;
+                tempCanvas.height = maxHeight;
                 const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
                 const restoreCanvas = document.createElement('canvas');
-                restoreCanvas.width = this.originalWidth;
-                restoreCanvas.height = this.originalHeight;
+                restoreCanvas.width = maxWidth;
+                restoreCanvas.height = maxHeight;
                 const restoreCtx = restoreCanvas.getContext('2d', { willReadFrequently: true });
 
-                // Process each frame
-                rawFrames.forEach((frame, index) => {
-                    // Handle disposal
-                    if (index === 0) {
-                        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-                    }
+                try {
+                    rawFrames.forEach((frame, index) => {
+                        if (index === 0) {
+                            tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                        }
 
-                    if (frame.disposalType === 3) {
-                        restoreCtx.clearRect(0, 0, restoreCanvas.width, restoreCanvas.height);
-                        restoreCtx.drawImage(tempCanvas, 0, 0);
-                    }
+                        if (frame.disposalType === 3) {
+                            restoreCtx.clearRect(0, 0, restoreCanvas.width, restoreCanvas.height);
+                            restoreCtx.drawImage(tempCanvas, 0, 0);
+                        }
 
-                    // Create ImageData from patch
-                    const frameImageData = new ImageData(
-                        new Uint8ClampedArray(frame.patch),
-                        frame.dims.width,
-                        frame.dims.height
-                    );
+                        const frameImageData = new ImageData(
+                            new Uint8ClampedArray(frame.patch),
+                            frame.dims.width,
+                            frame.dims.height
+                        );
+                        tempCtx.putImageData(frameImageData, frame.dims.left, frame.dims.top);
 
-                    // Draw frame patch at correct position
-                    tempCtx.putImageData(frameImageData, frame.dims.left, frame.dims.top);
+                        const frameCanvas = document.createElement('canvas');
+                        frameCanvas.width = maxWidth;
+                        frameCanvas.height = maxHeight;
+                        const frameCtx = frameCanvas.getContext('2d');
+                        frameCtx.drawImage(tempCanvas, 0, 0);
 
-                    // Create a canvas for this frame
-                    const frameCanvas = document.createElement('canvas');
-                    frameCanvas.width = this.originalWidth;
-                    frameCanvas.height = this.originalHeight;
-                    const frameCtx = frameCanvas.getContext('2d');
-                    frameCtx.drawImage(tempCanvas, 0, 0);
+                        composedFrames.push({
+                            canvas: frameCanvas,
+                            delay: frame.delay * 10 || 100,
+                            disposalType: frame.disposalType
+                        });
 
-                    this.frames.push({
-                        canvas: frameCanvas,
-                        delay: frame.delay * 10 || 100, // Convert to ms
-                        disposalType: frame.disposalType
+                        if (frame.disposalType === 2) {
+                            tempCtx.clearRect(frame.dims.left, frame.dims.top, frame.dims.width, frame.dims.height);
+                        } else if (frame.disposalType === 3) {
+                            tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+                            tempCtx.drawImage(restoreCanvas, 0, 0);
+                        }
                     });
-
-                    // Handle disposal for next frame
-                    if (frame.disposalType === 2) {
-                        // Restore to background
-                        tempCtx.clearRect(frame.dims.left, frame.dims.top, frame.dims.width, frame.dims.height);
-                    } else if (frame.disposalType === 3) {
-                        // Restore to the compositor state from before this frame was drawn
-                        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-                        tempCtx.drawImage(restoreCanvas, 0, 0);
-                    }
-                });
-
-                this.currentFrame = 0;
-
-                this.releaseCanvas(tempCanvas);
-                this.releaseCanvas(restoreCanvas);
+                    return {
+                        frames: composedFrames,
+                        width: maxWidth,
+                        height: maxHeight,
+                        currentFrame: 0
+                    };
+                } catch (error) {
+                    this.releaseFrames(composedFrames);
+                    throw error;
+                } finally {
+                    this.releaseCanvas(tempCanvas);
+                    this.releaseCanvas(restoreCanvas);
+                }
             }
 
             showEditor() {
@@ -3248,7 +3374,7 @@
 
             duplicateFrame() {
                 if (this.frames.length === 0) return;
-                this.stopPlayback();
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Duplicate frame');
 
                 const frame = this.frames[this.currentFrame];
@@ -3270,7 +3396,7 @@
             }
 
             deleteFrame() {
-                this.stopPlayback();
+                if (!this.prepareMutation()) return;
                 if (this.selectedFrames.size > 1) {
                     const indices = [...this.selectedFrames].sort((a, b) => b - a);
                     if (indices.length >= this.frames.length) {
@@ -3290,14 +3416,15 @@
                     this.showToast(`${indices.length} frames deleted`, 'success');
                     return;
                 }
-                this.deleteFrameAt(this.currentFrame);
+                this.deleteFrameAt(this.currentFrame, true);
             }
 
-            deleteFrameAt(index) {
+            deleteFrameAt(index, mutationPrepared = false) {
                 if (this.frames.length <= 1) {
                     this.showToast('Cannot delete the last frame', 'warning');
                     return;
                 }
+                if (!mutationPrepared && !this.prepareMutation()) return;
                 this.saveUndoState('Delete frame');
 
                 this.releaseCanvas(this.frames[index].canvas);
@@ -3314,7 +3441,7 @@
             }
 
             reorderFrame(fromIndex, toIndex) {
-                this.stopPlayback();
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Reorder frame');
                 const [frame] = this.frames.splice(fromIndex, 1);
                 this.frames.splice(toIndex, 0, frame);
@@ -3335,7 +3462,7 @@
 
             reverseFrames() {
                 if (this.frames.length < 2) return;
-                this.stopPlayback();
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Reverse frames');
 
                 this.frames.reverse();
@@ -3350,6 +3477,7 @@
             // ============================================
 
             applyDelayToSelected() {
+                if (this.frames.length === 0 || !this.prepareMutation()) return;
                 this.saveUndoState('Change frame delay');
                 const delay = parseInt(document.getElementById('frameDelay').value) || 100;
                 const targets = (this.selectedFrames.size > 1
@@ -3362,6 +3490,7 @@
             }
 
             applyDelayToAll() {
+                if (this.frames.length === 0 || !this.prepareMutation()) return;
                 this.saveUndoState('Change all delays');
                 const delay = parseInt(document.getElementById('frameDelay').value) || 100;
                 this.frames.forEach(f => f.delay = delay);
@@ -3494,6 +3623,7 @@
 
             applyCrop() {
                 if (this.frames.length === 0) return;
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Crop');
 
                 const x = Math.round(this.cropRect.x), y = Math.round(this.cropRect.y);
@@ -3553,6 +3683,7 @@
                 const newHeight = parseInt(document.getElementById('resizeH').value) || this.originalHeight;
 
                 if (newWidth === this.originalWidth && newHeight === this.originalHeight) return;
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Resize');
 
                 this.frames.forEach(frame => {
@@ -3593,6 +3724,7 @@
                     this.showToast('New dimensions must be larger than current canvas', 'warning');
                     return;
                 }
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Canvas expand');
 
                 const anchor = document.getElementById('expandAnchor').value;
@@ -3640,6 +3772,7 @@
 
             flipHorizontal() {
                 if (this.frames.length === 0) return;
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Flip horizontal');
 
                 this.frames.forEach(frame => {
@@ -3661,6 +3794,7 @@
 
             flipVertical() {
                 if (this.frames.length === 0) return;
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Flip vertical');
 
                 this.frames.forEach(frame => {
@@ -3682,6 +3816,7 @@
 
             rotate90() {
                 if (this.frames.length === 0) return;
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Rotate 90');
 
                 this.frames.forEach(frame => {
@@ -3742,6 +3877,7 @@
                     this.showToast('No filter changes to apply', 'warning');
                     return;
                 }
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Apply filters');
                 this.frames.forEach(frame => {
                     const newCanvas = document.createElement('canvas');
@@ -3785,6 +3921,7 @@
                     return;
                 }
 
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Redact');
 
                 let targets;
@@ -3852,6 +3989,7 @@
                     return;
                 }
 
+                if (!this.prepareMutation()) return;
                 this.saveUndoState('Background layer');
 
                 this.frames.forEach(frame => {
@@ -3927,13 +4065,156 @@
                 }
             }
 
+            cloneFrame(frame) {
+                const canvas = document.createElement('canvas');
+                canvas.width = frame.canvas.width;
+                canvas.height = frame.canvas.height;
+                canvas.getContext('2d').drawImage(frame.canvas, 0, 0);
+                return { canvas, delay: frame.delay, disposalType: frame.disposalType };
+            }
+
+            setExportControlsLocked(locked) {
+                const ids = [
+                    'importBtn', 'fileInput', 'undoBtn', 'redoBtn',
+                    'flipH', 'flipV', 'rotate', 'duplicateFrame', 'deleteFrame', 'reverseFrames',
+                    'applyCrop', 'applyResize', 'applyExpand', 'applyDelaySelected', 'applyDelayAll',
+                    'applyFilters', 'applyRedact', 'applyBackground', 'exportBtn',
+                    'splitFramesBtn', 'optimizeBtn'
+                ];
+                if (locked) {
+                    this._exportControlStates = new Map();
+                    ids.forEach(id => {
+                        const element = document.getElementById(id);
+                        if (!element) return;
+                        this._exportControlStates.set(element, element.disabled);
+                        element.disabled = true;
+                    });
+                } else if (this._exportControlStates) {
+                    this._exportControlStates.forEach((wasDisabled, element) => {
+                        element.disabled = wasDisabled;
+                    });
+                    this._exportControlStates = null;
+                }
+            }
+
+            beginExportJob(kind) {
+                if (this.frames.length === 0) return null;
+                if (this._activeOperation) {
+                    this.showToast(`Wait for ${this._activeOperation.kind} to finish`, 'warning');
+                    return null;
+                }
+                if (this._activeExportJob) {
+                    this.showToast('Another export is already running', 'warning');
+                    return null;
+                }
+
+                this.stopPlayback();
+                const snapshotFrames = [];
+                try {
+                    this.frames.forEach(frame => snapshotFrames.push(this.cloneFrame(frame)));
+                } catch (error) {
+                    this.releaseFrames(snapshotFrames);
+                    throw error;
+                }
+
+                let resolveCancel;
+                const cancelSignal = new Promise(resolve => {
+                    resolveCancel = resolve;
+                });
+                const job = {
+                    id: ++this._exportGeneration,
+                    kind,
+                    frames: snapshotFrames,
+                    width: this.originalWidth,
+                    height: this.originalHeight,
+                    projectGeneration: this._projectGeneration,
+                    startedAt: performance.now(),
+                    progress: 0,
+                    maxFrameBlockMs: 0,
+                    cancelled: false,
+                    cancelReason: '',
+                    encoder: null,
+                    cancelSignal,
+                    resolveCancel
+                };
+                this._activeExportJob = job;
+                this.setExportControlsLocked(true);
+                return job;
+            }
+
+            isExportJobCurrent(job) {
+                return !!job &&
+                    !job.cancelled &&
+                    this._activeExportJob === job &&
+                    job.id === this._exportGeneration;
+            }
+
+            assertExportJobCurrent(job) {
+                if (!this.isExportJobCurrent(job)) {
+                    const error = new Error(job?.cancelReason || 'Aborted');
+                    error.name = 'AbortError';
+                    throw error;
+                }
+            }
+
+            updateExportProgress(job, percent, message, progress, status) {
+                this.assertExportJobCurrent(job);
+                job.progress = Math.max(job.progress, Math.min(100, percent));
+                if (progress) progress.style.width = `${job.progress}%`;
+                if (status && message) status.textContent = message;
+            }
+
+            async waitForExportTask(job, task) {
+                const outcome = await Promise.race([
+                    Promise.resolve(task).then(value => ({ value })),
+                    job.cancelSignal.then(() => ({ cancelled: true }))
+                ]);
+                if (outcome.cancelled) this.assertExportJobCurrent(job);
+                return outcome.value;
+            }
+
+            cancelExportJob(reason = 'Export cancelled') {
+                const job = this._activeExportJob;
+                if (!job || job.cancelled) return;
+                job.cancelled = true;
+                job.cancelReason = reason;
+                job.resolveCancel();
+                if (job.encoder) job.encoder.abort();
+                if (this.currentEncoder) this.currentEncoder.abort();
+                const status = document.getElementById('exportStatus');
+                if (status) status.textContent = 'Cancelling...';
+            }
+
+            finishExportJob(job) {
+                if (!job) return;
+                this.releaseFrames(job.frames);
+                job.frames = [];
+                if (this._activeExportJob === job) {
+                    this.lastExportProfile = {
+                        kind: job.kind,
+                        durationMs: Math.round(performance.now() - job.startedAt),
+                        maxFrameBlockMs: Math.round(job.maxFrameBlockMs),
+                        cancelled: job.cancelled
+                    };
+                    this._activeExportJob = null;
+                    this.currentEncoder = null;
+                    this.setExportControlsLocked(false);
+                }
+            }
+
             // ============================================
             // Export
             // ============================================
 
             async exportGIF() {
-                if (this.frames.length === 0) return;
-                this.stopPlayback();
+                let job;
+                try {
+                    job = this.beginExportJob('GIF export');
+                } catch (error) {
+                    this.showToast('Could not start export: ' + error.message, 'error');
+                    return;
+                }
+                if (!job) return;
 
                 const modal = document.getElementById('exportModal');
                 const progress = document.getElementById('exportProgress');
@@ -3950,35 +4231,52 @@
                 const filename = (filenameInput && filenameInput.value.trim()) || (this.originalFilename + '-edited');
 
                 try {
-                    const encoder = new GifEncoder(this.originalWidth, this.originalHeight, {
+                    const encoder = new GifEncoder(job.width, job.height, {
                         quality: quality,
                         dither: ditherVal !== 'none' ? ditherVal : false,
                         repeat: loop,
                         maxColors: colorCount
                     });
+                    job.encoder = encoder;
                     this.currentEncoder = encoder;
 
-                    // Add frames
-                    for (let i = 0; i < this.frames.length; i++) {
-                        if (encoder.aborted) throw new Error('Aborted');
-                        const frame = this.frames[i];
+                    for (let i = 0; i < job.frames.length; i++) {
+                        this.assertExportJobCurrent(job);
+                        const frame = job.frames[i];
                         encoder.addFrame(frame.canvas, frame.delay);
-                        progress.style.width = ((i + 1) / this.frames.length * 40) + '%';
-                        status.textContent = `Adding frame ${i + 1} of ${this.frames.length}...`;
-                        await new Promise(resolve => requestAnimationFrame(resolve));
+                        this.updateExportProgress(
+                            job,
+                            ((i + 1) / job.frames.length) * 40,
+                            `Adding frame ${i + 1} of ${job.frames.length}...`,
+                            progress,
+                            status
+                        );
+                        await this.waitForExportTask(
+                            job,
+                            new Promise(resolve => requestAnimationFrame(resolve))
+                        );
                     }
 
                     status.textContent = 'Encoding...';
                     progress.classList.add('encoding');
 
-                    const blob = await encoder.render((p) => {
-                        progress.style.width = (40 + p * 60) + '%';
-                        status.textContent = `Encoding: ${Math.round(p * 100)}%`;
-                    });
+                    const blob = await this.waitForExportTask(job, encoder.render((p, metrics) => {
+                        job.maxFrameBlockMs = Math.max(job.maxFrameBlockMs, metrics?.durationMs || 0);
+                        if (!this.isExportJobCurrent(job)) {
+                            encoder.abort();
+                            return;
+                        }
+                        this.updateExportProgress(
+                            job,
+                            40 + p * 60,
+                            `Encoding: ${Math.round(p * 100)}%`,
+                            progress,
+                            status
+                        );
+                    }));
 
-                    this.currentEncoder = null;
-                    progress.classList.remove('encoding');
-                    modal.classList.remove('active');
+                    this.assertExportJobCurrent(job);
+                    this.updateExportProgress(job, 100, 'Export complete', progress, status);
 
                     const sizeText = this.formatBytes(blob.size);
                     const fullFilename = filename + '.gif';
@@ -4017,13 +4315,16 @@
                     }
 
                 } catch (error) {
-                    this.currentEncoder = null;
-                    progress.classList.remove('encoding');
-                    if (error.message !== 'Aborted') {
-                        modal.classList.remove('active');
+                    if (error.name === 'AbortError' || error.message === 'Aborted') {
+                        this.showToast('Export cancelled', 'warning');
+                    } else {
                         console.error('Export error:', error);
                         this.showToast('Export failed: ' + error.message, 'error');
                     }
+                } finally {
+                    progress.classList.remove('encoding');
+                    modal.classList.remove('active');
+                    this.finishExportJob(job);
                 }
             }
 
@@ -4052,7 +4353,14 @@
             }
 
             async exportAPNG() {
-                if (this.frames.length === 0) return;
+                let job;
+                try {
+                    job = this.beginExportJob('APNG export');
+                } catch (error) {
+                    this.showToast('Could not start export: ' + error.message, 'error');
+                    return;
+                }
+                if (!job) return;
 
                 const modal = document.getElementById('exportModal');
                 const progress = document.getElementById('exportProgress');
@@ -4062,21 +4370,32 @@
                 status.textContent = 'Loading APNG encoder...';
 
                 try {
-                    await this.loadUPNG();
+                    await this.waitForExportTask(job, this.loadUPNG());
+                    this.assertExportJobCurrent(job);
 
                     status.textContent = 'Preparing frames...';
-                    const w = this.originalWidth, h = this.originalHeight;
+                    const w = job.width, h = job.height;
                     const imgs = [];
                     const dels = [];
 
-                    for (let i = 0; i < this.frames.length; i++) {
-                        const frame = this.frames[i];
+                    for (let i = 0; i < job.frames.length; i++) {
+                        this.assertExportJobCurrent(job);
+                        const frame = job.frames[i];
                         const ctx = frame.canvas.getContext('2d', { willReadFrequently: true });
                         const imgData = ctx.getImageData(0, 0, w, h);
                         imgs.push(imgData.data.buffer);
                         dels.push(frame.delay);
-                        progress.style.width = ((i + 1) / this.frames.length * 40) + '%';
-                        status.textContent = `Preparing frame ${i + 1} of ${this.frames.length}...`;
+                        this.updateExportProgress(
+                            job,
+                            ((i + 1) / job.frames.length) * 40,
+                            `Preparing frame ${i + 1} of ${job.frames.length}...`,
+                            progress,
+                            status
+                        );
+                        await this.waitForExportTask(
+                            job,
+                            new Promise(resolve => requestAnimationFrame(resolve))
+                        );
                     }
 
                     status.textContent = 'Encoding APNG...';
@@ -4084,10 +4403,11 @@
 
                     const colorCount = parseInt(document.getElementById('colorCount').value) || 256;
                     const cnum = colorCount >= 256 ? 0 : colorCount;
+                    const encodeStarted = performance.now();
                     const apngBuffer = UPNG.encode(imgs, w, h, cnum, dels);
-
-                    progress.classList.remove('encoding');
-                    modal.classList.remove('active');
+                    job.maxFrameBlockMs = Math.max(job.maxFrameBlockMs, performance.now() - encodeStarted);
+                    this.assertExportJobCurrent(job);
+                    this.updateExportProgress(job, 100, 'Export complete', progress, status);
 
                     const blob = new Blob([apngBuffer], { type: 'image/apng' });
                     const sizeText = this.formatBytes(blob.size);
@@ -4120,10 +4440,16 @@
                         this.showToast(`APNG exported (${sizeText})`, 'success');
                     }
                 } catch (error) {
+                    if (error.name === 'AbortError') {
+                        this.showToast('Export cancelled', 'warning');
+                    } else {
+                        console.error('APNG export error:', error);
+                        this.showToast('APNG export failed: ' + error.message, 'error');
+                    }
+                } finally {
                     progress.classList.remove('encoding');
                     modal.classList.remove('active');
-                    console.error('APNG export error:', error);
-                    this.showToast('APNG export failed: ' + error.message, 'error');
+                    this.finishExportJob(job);
                 }
             }
 
@@ -4132,7 +4458,14 @@
             // ============================================
 
             async optimizeGIF() {
-                if (this.frames.length === 0) return;
+                let job;
+                try {
+                    job = this.beginExportJob('GIF optimization');
+                } catch (error) {
+                    this.showToast('Could not start optimization: ' + error.message, 'error');
+                    return;
+                }
+                if (!job) return;
 
                 const statusEl = document.getElementById('optimizeStatus');
                 const btn = document.getElementById('optimizeBtn');
@@ -4146,37 +4479,71 @@
                     const colorCount = parseInt(document.getElementById('colorCount').value) || 256;
                     const loop = document.getElementById('loopGif').checked ? 0 : -1;
 
-                    const encoder = new GifEncoder(this.originalWidth, this.originalHeight, {
+                    const encoder = new GifEncoder(job.width, job.height, {
                         quality, dither: ditherVal !== 'none' ? ditherVal : false,
                         repeat: loop, maxColors: colorCount
                     });
-                    this.frames.forEach(f => encoder.addFrame(f.canvas, f.delay));
-                    const blob = await encoder.render();
+                    job.encoder = encoder;
+                    this.currentEncoder = encoder;
+                    for (let i = 0; i < job.frames.length; i++) {
+                        this.assertExportJobCurrent(job);
+                        const frame = job.frames[i];
+                        encoder.addFrame(frame.canvas, frame.delay);
+                        this.updateExportProgress(
+                            job,
+                            ((i + 1) / job.frames.length) * 30,
+                            `Preparing frame ${i + 1} of ${job.frames.length}...`,
+                            null,
+                            statusEl
+                        );
+                        await this.waitForExportTask(
+                            job,
+                            new Promise(resolve => requestAnimationFrame(resolve))
+                        );
+                    }
+                    const blob = await this.waitForExportTask(job, encoder.render((progress, metrics) => {
+                        job.maxFrameBlockMs = Math.max(job.maxFrameBlockMs, metrics?.durationMs || 0);
+                        if (!this.isExportJobCurrent(job)) {
+                            encoder.abort();
+                            return;
+                        }
+                        this.updateExportProgress(
+                            job,
+                            30 + progress * 30,
+                            `Encoding source GIF: ${Math.round(progress * 100)}%`,
+                            null,
+                            statusEl
+                        );
+                    }));
+                    this.assertExportJobCurrent(job);
                     const originalSize = blob.size;
 
-                    statusEl.textContent = 'Loading optimizer...';
+                    this.updateExportProgress(job, 65, 'Loading optimizer...', null, statusEl);
 
                     if (!window._gifsicleLoaded) {
-                        await new Promise((resolve, reject) => {
+                        await this.waitForExportTask(job, new Promise((resolve, reject) => {
                             const s = document.createElement('script');
                             s.src = 'https://cdn.jsdelivr.net/npm/gifsicle-wasm-browser@1.5.19/dist/gifsicle.min.js';
                             s.onload = () => { window._gifsicleLoaded = true; resolve(); };
                             s.onerror = () => reject(new Error('Failed to load gifsicle-wasm'));
                             document.head.appendChild(s);
-                        });
+                        }));
                     }
+                    this.assertExportJobCurrent(job);
 
-                    statusEl.textContent = 'Optimizing...';
+                    this.updateExportProgress(job, 70, 'Optimizing...', null, statusEl);
 
                     const level = document.getElementById('optimizeLevel').value;
                     const lossy = parseInt(document.getElementById('optimizeLossy').value);
                     const args = [`-${level}`];
                     if (lossy > 0) args.push(`--lossy=${lossy}`);
 
-                    const result = await window.gifsicle.run({
+                    const result = await this.waitForExportTask(job, window.gifsicle.run({
                         input: [{ file: await blob.arrayBuffer(), name: 'input.gif' }],
                         command: [`gifsicle ${args.join(' ')} input.gif -o /output/out.gif`]
-                    });
+                    }));
+                    this.assertExportJobCurrent(job);
+                    this.updateExportProgress(job, 100, 'Optimization complete', null, statusEl);
 
                     if (!result || !result[0]) throw new Error('Optimization produced no output');
 
@@ -4212,11 +4579,16 @@
                     this.showToast(`Optimized: ${reduction}% smaller`, 'success');
 
                 } catch (error) {
-                    console.error('Optimization error:', error);
-                    statusEl.textContent = 'Optimization failed: ' + error.message;
-                    this.showToast('Optimization failed: ' + error.message, 'error');
+                    if (error.name === 'AbortError' || error.message === 'Aborted') {
+                        statusEl.textContent = 'Optimization cancelled';
+                        this.showToast('Optimization cancelled', 'warning');
+                    } else {
+                        console.error('Optimization error:', error);
+                        statusEl.textContent = 'Optimization failed: ' + error.message;
+                        this.showToast('Optimization failed: ' + error.message, 'error');
+                    }
                 } finally {
-                    btn.disabled = false;
+                    this.finishExportJob(job);
                 }
             }
 
@@ -4430,10 +4802,11 @@
                 if (e.key === 'Escape') {
                     const modal = document.getElementById('exportModal');
                     if (modal.classList.contains('active')) {
-                        if (this.currentEncoder) this.currentEncoder.abort();
-                        document.getElementById('exportProgress').classList.remove('encoding');
-                        modal.classList.remove('active');
-                        this.showToast('Export cancelled', 'warning');
+                        if (this._activeExportJob) {
+                            this.cancelExportJob();
+                        } else {
+                            modal.classList.remove('active');
+                        }
                         return;
                     }
                 }

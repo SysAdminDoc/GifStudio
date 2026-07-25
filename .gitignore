@@ -2,6 +2,8 @@
 .env
 *.log
 CLAUDE.md
+node_modules/
+test-results/
 
 # Markdown files local-only (except README)
 *.md
