@@ -13,9 +13,9 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 ## Features
 
 ### Import
-- **GIF Import** — Open any GIF for editing with full frame extraction
+- **GIF Import** — Extract and edit GIFs within the documented dimension, frame-count, and decoded-memory limits
 - **Image Sequence** — Drag-drop or select multiple JPG, PNG, or WebP files to create a new GIF
-- **Frame Inspector** — View internal GIF structure: per-frame dimensions, offsets, delays, disposal methods, palette sizes
+- **Frame Inspector** — View decoded dimensions/timing for every source, raw block details when the JS GIF parser is used, memory estimates, and validated output summaries
 
 ### Edit
 - **Frame Editor** — Add, remove, reorder, duplicate, and reverse frames with undo/redo (30 levels)
@@ -30,6 +30,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 
 ### Export & Optimize
 - **GIF Export** — gifenc PNN quantizer, quality, Floyd-Steinberg dithering, configurable color count (16–256), loop control
+- **APNG Export** — Millisecond timing, alpha support, and optional palette reduction through the bundled UPNG.js codec
 - **GIF Optimization** — Lossy LZW compression via gifsicle-wasm (O1/O2/O3 levels)
 - **Split Frames** — Export all frames as numbered PNGs in a ZIP archive
 - **File Size Estimation** — Live estimated size with Discord, Slack, and Twitter limit badges
@@ -42,7 +43,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Zero Install** — The core GIF editor runs from `index.html`; the repository and hosted PWA include local optional APNG/optimization assets.
 - **Inline Codecs** — Self-contained GIF decoder + gifenc PNN encoder with no external dependencies
 - **Offline PWA** — When served over HTTP(S), the service worker caches the app shell and optional codecs, reports update readiness, and falls back to the cache when offline
-- **Native Decoding** — Uses ImageDecoder API on Chrome/Firefox for faster GIF import; JS fallback on Safari
+- **Native Decoding** — Uses the browser `ImageDecoder` API when available and the same-budget JavaScript parser everywhere else
 - **Lazy Thumbnails** — Timeline uses IntersectionObserver + CSS content-visibility for smooth scrolling
 - **Safari Memory Safety** — Explicit canvas cleanup prevents memory leaks on WebKit browsers
 - **Vendored Fonts** — All fonts inlined as base64 woff2; zero external requests
@@ -54,12 +55,40 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Mobile Drawer** — Sidebar slides out on small screens via hamburger toggle
 - **Dark Theme** — Professional dark interface with `color-scheme: dark` for native controls
 
+## Capabilities and Limits
+
+| Area | Verified behavior |
+|---|---|
+| Processing and privacy | Frames, recovery data, and exports stay in the browser. GifStudio has no backend or telemetry. |
+| Core GIF editing | Works from a local `index.html`. APNG export, optimization, installability, updates, and complete offline use require the repository/hosted app so the vendored assets and service worker are present. |
+| Offline behavior | After one successful HTTP(S) load, the service worker caches `index.html`, the manifest, icon, and all optional codecs. A local `file://` page cannot register that service worker. |
+| Decoder fallback | `ImageDecoder` is preferred when the browser exposes it; malformed/unsupported native decodes fall back to the strict JavaScript parser. Both paths enforce 8192×8192, 500-frame, and 256 MiB decoded-frame limits. |
+| Memory guard | Import, restore, edits, autosave, and export estimate resident and temporary RGBA buffers before allocation. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
+| Timing | GIF controls and output use centiseconds; values are rounded deterministically to 10 ms units. APNG controls and output use milliseconds. Source, edited, and encoded durations are shown separately. |
+| Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
+| Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
+| Recovery | A versioned IndexedDB session is retained for up to seven days or until dismissed. Superseded saves are aborted; storage failures advise exporting before leaving the tab. |
+
+GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 changed-region encoder was superseded by gifenc in v0.4.0 because safe local-frame encoding needs look-ahead disposal handling for opaque-to-transparent transitions. The bundled optimizer remains the supported size-reduction path.
+
 ## Usage
 
 1. **[Open GifStudio in your browser](https://sysadmindoc.github.io/GifStudio/)** — or download `index.html` for core GIF editing; clone/download the repository to use optional codecs locally
 2. Drop a GIF to edit, or drop multiple images to create a new GIF
 3. Edit frames, apply filters, adjust timing
 4. Export or optimize and download
+
+## Development and Release Checks
+
+```powershell
+npm ci
+npx playwright install chromium
+npm test
+npm run lint
+npm run build
+```
+
+`npm test` runs strict parser fixtures and Playwright against the shipped `index.html`. The static release check also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
 
 ## License
 

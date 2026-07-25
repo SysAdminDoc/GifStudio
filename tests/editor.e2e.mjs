@@ -36,6 +36,19 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('shipped page boots without console or uncaught errors', async ({ page }) => {
+  const errors = [];
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', error => errors.push(error.message));
+
+  await page.reload({ waitUntil: 'networkidle' });
+
+  expect(errors).toEqual([]);
+  await expect(page.getByRole('heading', { name: 'Drop files here' })).toBeVisible();
+});
+
 test('failed replacement import preserves the active project', async ({ page }) => {
   const input = page.locator('#fileInput');
   await input.setInputFiles(gifFile());
