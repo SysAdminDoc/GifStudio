@@ -1590,28 +1590,91 @@
     <!-- Inline GIF Decoder (replaces gifuct-js) -->
     <script>
     const GifDecoder = (() => {
+        const DEFAULT_LIMITS = Object.freeze({
+            maxWidth: 8192,
+            maxHeight: 8192,
+            maxFrames: 500,
+            maxDecodedBytes: 256 * 1024 * 1024
+        });
+
+        function invalidGif(message) {
+            return new Error(`Invalid GIF: ${message}`);
+        }
+
+        function validateBudget(width, height, frameCount, overrides = {}) {
+            const limits = { ...DEFAULT_LIMITS, ...overrides };
+            if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+                throw invalidGif('logical screen dimensions must be positive integers');
+            }
+            if (width > limits.maxWidth || height > limits.maxHeight) {
+                throw invalidGif(`dimensions ${width}×${height} exceed the ${limits.maxWidth}×${limits.maxHeight} maximum`);
+            }
+            if (!Number.isInteger(frameCount) || frameCount < 0) {
+                throw invalidGif('frame count is invalid');
+            }
+            if (frameCount > limits.maxFrames) {
+                throw invalidGif(`frame count ${frameCount} exceeds the ${limits.maxFrames} frame maximum`);
+            }
+            const pixels = width * height * frameCount;
+            const decodedBytes = pixels * 4;
+            if (!Number.isSafeInteger(pixels) || !Number.isSafeInteger(decodedBytes)) {
+                throw invalidGif('decoded size exceeds safe browser limits');
+            }
+            if (decodedBytes > limits.maxDecodedBytes) {
+                throw invalidGif(`decoded frame data requires ${Math.ceil(decodedBytes / (1024 * 1024))} MiB; maximum is ${Math.floor(limits.maxDecodedBytes / (1024 * 1024))} MiB`);
+            }
+            return { pixels, decodedBytes, limits };
+        }
+
         // Binary stream reader
         class Stream {
             constructor(buf) {
                 this.data = new Uint8Array(buf);
                 this.pos = 0;
             }
-            readByte() { return this.data[this.pos++]; }
-            readBytes(n) { const s = this.data.slice(this.pos, this.pos + n); this.pos += n; return s; }
-            readUint16() { const v = this.data[this.pos] | (this.data[this.pos+1] << 8); this.pos += 2; return v; }
-            readString(n) { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(this.data[this.pos++]); return s; }
-            skipBytes(n) { this.pos += n; }
+            ensure(n, context = 'data') {
+                if (!Number.isInteger(n) || n < 0 || this.pos + n > this.data.length) {
+                    throw invalidGif(`truncated ${context} at byte ${this.pos}`);
+                }
+            }
+            readByte(context = 'byte') {
+                this.ensure(1, context);
+                return this.data[this.pos++];
+            }
+            readBytes(n, context = 'data') {
+                this.ensure(n, context);
+                const s = this.data.slice(this.pos, this.pos + n);
+                this.pos += n;
+                return s;
+            }
+            readUint16(context = '16-bit value') {
+                this.ensure(2, context);
+                const v = this.data[this.pos] | (this.data[this.pos + 1] << 8);
+                this.pos += 2;
+                return v;
+            }
+            readString(n, context = 'string') {
+                const bytes = this.readBytes(n, context);
+                let s = '';
+                for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+                return s;
+            }
+            skipBytes(n, context = 'data') {
+                this.ensure(n, context);
+                this.pos += n;
+            }
         }
 
         function readSubBlocks(st) {
             const blocks = [];
-            let size;
-            while (st.pos < st.data.length && (size = st.readByte()) !== 0) {
-                blocks.push(st.readBytes(size));
-            }
-            // Flatten
             let totalLen = 0;
-            blocks.forEach(b => totalLen += b.length);
+            while (true) {
+                const size = st.readByte('sub-block size');
+                if (size === 0) break;
+                const block = st.readBytes(size, 'sub-block payload');
+                blocks.push(block);
+                totalLen += block.length;
+            }
             const out = new Uint8Array(totalLen);
             let off = 0;
             blocks.forEach(b => { out.set(b, off); off += b.length; });
@@ -1619,6 +1682,12 @@
         }
 
         function lzwDecode(minCodeSize, data, pixelCount) {
+            if (!Number.isInteger(minCodeSize) || minCodeSize < 2 || minCodeSize > 8) {
+                throw invalidGif(`LZW minimum code size ${minCodeSize} is outside 2–8`);
+            }
+            if (!Number.isInteger(pixelCount) || pixelCount < 1) {
+                throw invalidGif('frame pixel count is invalid');
+            }
             const clearCode = 1 << minCodeSize;
             const eoiCode = clearCode + 1;
             let codeSize = minCodeSize + 1;
@@ -1644,23 +1713,26 @@
                     buf |= data[dataPos++] << bufBits;
                     bufBits += 8;
                 }
+                if (bufBits < codeSize) return null;
                 const code = buf & codeMask;
                 buf >>= codeSize;
                 bufBits -= codeSize;
                 return code;
             }
 
-            let code;
-            while (pixelPos < pixelCount) {
-                code = readCode();
-                if (code === eoiCode || dataPos >= data.length && bufBits < codeSize) break;
+            while (true) {
+                const code = readCode();
+                if (code === null) throw invalidGif('truncated LZW image data');
+                if (code === eoiCode) {
+                    break;
+                }
                 if (code === clearCode) {
                     initTable();
                     prevCode = -1;
                     continue;
                 }
                 let entry;
-                if (code < nextCode) {
+                if (code < nextCode && table[code]) {
                     entry = table[code];
                 } else if (code === nextCode && prevCode !== -1) {
                     const prev = table[prevCode];
@@ -1668,16 +1740,16 @@
                     entry.set(prev);
                     entry[prev.length] = prev[0];
                 } else {
-                    break; // corrupt
+                    throw invalidGif(`invalid LZW code ${code}`);
                 }
-                // Output entry
-                if (pixelPos + entry.length <= pixelCount) {
-                    pixels.set(entry, pixelPos);
+                if (pixelPos + entry.length > pixelCount) {
+                    throw invalidGif('LZW data expands beyond the declared frame size');
                 }
+                pixels.set(entry, pixelPos);
                 pixelPos += entry.length;
-                // Add to table
                 if (prevCode !== -1 && nextCode < 4096) {
                     const prev = table[prevCode];
+                    if (!prev) throw invalidGif('invalid LZW dictionary reference');
                     const newEntry = new Uint8Array(prev.length + 1);
                     newEntry.set(prev);
                     newEntry[prev.length] = entry[0];
@@ -1688,6 +1760,10 @@
                     }
                 }
                 prevCode = code;
+                if (pixelPos === pixelCount) break;
+            }
+            if (pixelPos !== pixelCount) {
+                throw invalidGif(`LZW data produced ${pixelPos} of ${pixelCount} pixels`);
             }
             return pixels;
         }
@@ -1711,44 +1787,55 @@
             return out;
         }
 
-        function parseGIF(buffer) {
+        function parseGIF(buffer, limitOverrides = {}) {
             const st = new Stream(buffer);
-            const header = st.readString(6);
+            const header = st.readString(6, 'header');
             if (header !== 'GIF89a' && header !== 'GIF87a') throw new Error('Not a GIF file');
 
-            const width = st.readUint16();
-            const height = st.readUint16();
-            const packed = st.readByte();
+            const width = st.readUint16('logical screen width');
+            const height = st.readUint16('logical screen height');
+            validateBudget(width, height, 0, limitOverrides);
+            const packed = st.readByte('logical screen flags');
             const hasGCT = (packed >> 7) & 1;
             const gctSize = packed & 0x07;
-            st.readByte(); // bg color
-            st.readByte(); // aspect ratio
+            st.readByte('background color index');
+            st.readByte('pixel aspect ratio');
 
             let gct = null;
             if (hasGCT) {
                 const numColors = 2 << gctSize;
                 gct = [];
                 for (let i = 0; i < numColors; i++) {
-                    gct.push([st.readByte(), st.readByte(), st.readByte()]);
+                    gct.push([
+                        st.readByte('global color table'),
+                        st.readByte('global color table'),
+                        st.readByte('global color table')
+                    ]);
                 }
             }
 
             const frames = [];
             let graphicControl = null;
+            let sawTrailer = false;
 
             while (st.pos < st.data.length) {
-                const block = st.readByte();
-                if (block === 0x3B) break; // trailer
+                const block = st.readByte('block introducer');
+                if (block === 0x3B) {
+                    sawTrailer = true;
+                    break;
+                }
                 if (block === 0x21) { // extension
-                    const label = st.readByte();
+                    const label = st.readByte('extension label');
                     if (label === 0xF9) { // graphic control
-                        st.readByte(); // block size (4)
-                        const gcp = st.readByte();
-                        const delay = st.readUint16();
-                        const transparentIndex = st.readByte();
-                        st.readByte(); // block terminator
+                        const blockSize = st.readByte('graphic control block size');
+                        if (blockSize !== 4) throw invalidGif(`graphic control block size is ${blockSize}, expected 4`);
+                        const gcp = st.readByte('graphic control flags');
+                        const delay = st.readUint16('graphic control delay');
+                        const transparentIndex = st.readByte('transparent color index');
+                        const terminator = st.readByte('graphic control terminator');
+                        if (terminator !== 0) throw invalidGif('graphic control extension is missing its terminator');
                         graphicControl = {
-                            disposalMethod: (gcp >> 3) & 0x07,
+                            disposalMethod: (gcp >> 2) & 0x07,
                             transparentFlag: gcp & 0x01,
                             delay: delay,
                             transparentIndex: transparentIndex
@@ -1758,11 +1845,15 @@
                         readSubBlocks(st);
                     }
                 } else if (block === 0x2C) { // image descriptor
-                    const left = st.readUint16();
-                    const top = st.readUint16();
-                    const fw = st.readUint16();
-                    const fh = st.readUint16();
-                    const idPacked = st.readByte();
+                    const left = st.readUint16('frame left offset');
+                    const top = st.readUint16('frame top offset');
+                    const fw = st.readUint16('frame width');
+                    const fh = st.readUint16('frame height');
+                    if (fw < 1 || fh < 1) throw invalidGif('frame dimensions must be positive');
+                    if (left + fw > width || top + fh > height) {
+                        throw invalidGif(`frame ${frames.length + 1} lies outside the logical screen`);
+                    }
+                    const idPacked = st.readByte('image descriptor flags');
                     const hasLCT = (idPacked >> 7) & 1;
                     const interlaced = (idPacked >> 6) & 1;
                     const lctSize = idPacked & 0x07;
@@ -1772,30 +1863,42 @@
                         const numColors = 2 << lctSize;
                         lct = [];
                         for (let i = 0; i < numColors; i++) {
-                            lct.push([st.readByte(), st.readByte(), st.readByte()]);
+                            lct.push([
+                                st.readByte('local color table'),
+                                st.readByte('local color table'),
+                                st.readByte('local color table')
+                            ]);
                         }
                     }
 
-                    const minCodeSize = st.readByte();
+                    const colorTable = lct || gct;
+                    if (!colorTable) throw invalidGif(`frame ${frames.length + 1} has no color table`);
+                    const minCodeSize = st.readByte('LZW minimum code size');
+                    if (minCodeSize < 2 || minCodeSize > 8) {
+                        throw invalidGif(`LZW minimum code size ${minCodeSize} is outside 2–8`);
+                    }
                     const imageData = readSubBlocks(st);
+                    if (imageData.length === 0) throw invalidGif(`frame ${frames.length + 1} has no image data`);
 
                     frames.push({
                         left, top, width: fw, height: fh,
                         interlaced: !!interlaced,
-                        colorTable: lct || gct,
+                        colorTable,
                         minCodeSize,
                         imageData,
                         graphicControl: graphicControl || null
                     });
+                    validateBudget(width, height, frames.length, limitOverrides);
                     graphicControl = null;
                 } else if (block === 0x00) {
                     // skip null block
                 } else {
-                    // unknown block, try to skip
-                    break;
+                    throw invalidGif(`unknown block 0x${block.toString(16).padStart(2, '0')} at byte ${st.pos - 1}`);
                 }
             }
 
+            if (!sawTrailer) throw invalidGif('missing trailer');
+            if (frames.length === 0) throw invalidGif('contains no image frames');
             return { width, height, gct, frames };
         }
 
@@ -1819,7 +1922,8 @@
                         if (transparentFlag && idx === transparentIndex) {
                             patch[i*4] = 0; patch[i*4+1] = 0; patch[i*4+2] = 0; patch[i*4+3] = 0;
                         } else {
-                            const color = colorTable[idx] || [0,0,0];
+                            const color = colorTable[idx];
+                            if (!color) throw invalidGif(`palette index ${idx} is outside the frame color table`);
                             patch[i*4] = color[0];
                             patch[i*4+1] = color[1];
                             patch[i*4+2] = color[2];
@@ -1838,7 +1942,7 @@
             });
         }
 
-        return { parseGIF, decompressFrames };
+        return { parseGIF, decompressFrames, validateBudget, limits: DEFAULT_LIMITS };
     })();
     // Alias to match gifuct-js API used in the app
     const gifuct = GifDecoder;
@@ -2582,11 +2686,12 @@
                     if (!usedNativeDecoder) {
                         const gif = GifDecoder.parseGIF(buffer);
                         const gifW = gif.width, gifH = gif.height;
-                        if (gifW > 8192 || gifH > 8192) {
-                            throw new Error(`GIF dimensions ${gifW}×${gifH} exceed the 8192×8192 maximum`);
-                        }
+                        const budget = GifDecoder.validateBudget(gifW, gifH, gif.frames.length);
                         if (gifW > 4096 || gifH > 4096) {
                             this.showToast(`Warning: large dimensions ${gifW}×${gifH} — performance may be slow`, 'warning');
+                        }
+                        if (budget.decodedBytes > GifDecoder.limits.maxDecodedBytes * 0.75) {
+                            this.showToast(`Warning: decoded frames require about ${this.formatBytes(budget.decodedBytes)}`, 'warning');
                         }
 
                         this.rawGifMeta = gif.frames.map((f, i) => ({
@@ -2600,10 +2705,6 @@
                         }));
 
                         const frames = GifDecoder.decompressFrames(gif, true);
-                        if (frames.length === 0) throw new Error('No frames found in GIF');
-                        if (frames.length > 500) {
-                            this.showToast(`Warning: ${frames.length} frames — this may be slow to edit`, 'warning');
-                        }
                         this.loadFrames(frames);
                     }
 
@@ -2627,38 +2728,55 @@
             }
 
             async decodeWithImageDecoder(buffer) {
-                const decoder = new ImageDecoder({ data: buffer, type: 'image/gif' });
-                await decoder.tracks.ready;
-                const track = decoder.tracks.selectedTrack;
-                if (!track || track.frameCount === 0) {
-                    decoder.close();
-                    return false;
-                }
-
-                const frameCount = track.frameCount;
-                this.rawGifMeta = null;
+                let decoder = null;
                 const decodedFrames = [];
+                try {
+                    decoder = new ImageDecoder({ data: buffer, type: 'image/gif' });
+                    await decoder.tracks.ready;
+                    const track = decoder.tracks.selectedTrack;
+                    if (!track || track.frameCount === 0) return false;
 
-                for (let i = 0; i < frameCount; i++) {
-                    const result = await decoder.decode({ frameIndex: i, completeFramesOnly: true });
-                    const vf = result.image;
-                    const c = document.createElement('canvas');
-                    c.width = vf.displayWidth;
-                    c.height = vf.displayHeight;
-                    const ctx = c.getContext('2d');
-                    ctx.drawImage(vf, 0, 0);
-                    const delayMs = Math.round((vf.duration || 100000) / 1000);
-                    vf.close();
-                    decodedFrames.push({ canvas: c, delay: delayMs || 100, disposalType: 0 });
+                    const frameCount = track.frameCount;
+                    GifDecoder.validateBudget(1, 1, frameCount);
+                    let width = 0;
+                    let height = 0;
+
+                    for (let i = 0; i < frameCount; i++) {
+                        const result = await decoder.decode({ frameIndex: i, completeFramesOnly: true });
+                        const vf = result.image;
+                        try {
+                            if (i === 0) {
+                                width = vf.displayWidth;
+                                height = vf.displayHeight;
+                                GifDecoder.validateBudget(width, height, frameCount);
+                            } else if (vf.displayWidth !== width || vf.displayHeight !== height) {
+                                throw new Error('Invalid GIF: native decoder returned inconsistent frame dimensions');
+                            }
+                            const c = document.createElement('canvas');
+                            c.width = width;
+                            c.height = height;
+                            const ctx = c.getContext('2d');
+                            ctx.drawImage(vf, 0, 0);
+                            const delayMs = Math.round((vf.duration || 100000) / 1000);
+                            decodedFrames.push({ canvas: c, delay: delayMs || 100, disposalType: 0 });
+                        } finally {
+                            vf.close();
+                        }
+                    }
+
+                    if (decodedFrames.length === 0) return false;
+                    this.frames = decodedFrames;
+                    this.rawGifMeta = null;
+                    this.originalWidth = width;
+                    this.originalHeight = height;
+                    this.currentFrame = 0;
+                    return true;
+                } catch (error) {
+                    decodedFrames.forEach(frame => this.releaseCanvas(frame.canvas));
+                    throw error;
+                } finally {
+                    if (decoder) decoder.close();
                 }
-                decoder.close();
-
-                if (decodedFrames.length === 0) return false;
-                this.frames = decodedFrames;
-                this.originalWidth = this.frames[0].canvas.width;
-                this.originalHeight = this.frames[0].canvas.height;
-                this.currentFrame = 0;
-                return true;
             }
 
             async handleImageFiles(files) {

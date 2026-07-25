@@ -1,0 +1,16 @@
+{
+  "name": "gifstudio",
+  "version": "0.5.2",
+  "private": true,
+  "description": "Test and release tooling for the single-file GifStudio browser app",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node scripts/release-check.mjs",
+    "build": "node scripts/release-check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
