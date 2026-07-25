@@ -66,6 +66,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Memory guard | Import, restore, edits, autosave, and export estimate resident and temporary RGBA buffers before allocation. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
 | Timing | GIF controls and output use centiseconds; values are rounded deterministically to 10 ms units. APNG controls and output use milliseconds. Source, edited, and encoded durations are shown separately. |
 | Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
+| Split-frame ZIP | PNG splitting uses the shared progress/cancel flow, checks serialization and CRCs, and stops before allocation above 500 entries or a 512 MiB estimated/actual ZIP. Output basenames are normalized for cross-platform filesystems. |
 | Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
 | Recovery | A versioned IndexedDB session is retained for up to seven days or until dismissed. Superseded saves are aborted; storage failures advise exporting before leaving the tab. |
 

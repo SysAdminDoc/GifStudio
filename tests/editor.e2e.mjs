@@ -7,6 +7,38 @@ function gifFile(name = 'pixel.gif') {
   return { name, mimeType: 'image/gif', buffer: BASIC_GIF };
 }
 
+function crc32(buffer) {
+  let crc = 0xFFFFFFFF;
+  for (const value of buffer) {
+    crc ^= value;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function parseStoredZip(buffer) {
+  const entries = [];
+  let offset = 0;
+  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const expectedCrc = buffer.readUInt32LE(offset + 14);
+    const size = buffer.readUInt32LE(offset + 18);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const data = buffer.subarray(dataStart, dataStart + size);
+    entries.push({
+      name: buffer.subarray(nameStart, nameStart + nameLength).toString('utf8'),
+      data,
+      expectedCrc
+    });
+    offset = dataStart + size;
+  }
+  return entries;
+}
+
 async function readRecoveryRecord(page) {
   return page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => {
@@ -298,6 +330,73 @@ test('optional codecs make no cross-origin runtime requests', async ({ page }) =
   await downloadPromise;
 
   expect(externalRequests).toEqual([]);
+});
+
+test('split-frame ZIP is valid, progress-driven, and basename-safe', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([gifFile('one.gif'), gifFile('two.gif')]);
+  await page.evaluate(() => {
+    editor.originalFilename = '..\\CON<>:unsafe/name';
+  });
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#splitFramesBtn').click();
+  const download = await downloadPromise;
+  const bytes = await readFile(await download.path());
+  const entries = parseStoredZip(bytes);
+
+  expect(download.suggestedFilename()).toMatch(/^[^<>:"/\\|?*]+-frames\.zip$/);
+  expect(entries).toHaveLength(2);
+  for (const entry of entries) {
+    expect(entry.name).toMatch(/^[^<>:"/\\|?*]+-frame-[12]\.png$/);
+    expect(entry.data.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(crc32(entry.data)).toBe(entry.expectedCrc);
+  }
+  expect(bytes.includes(Buffer.from([0x50, 0x4B, 0x05, 0x06]))).toBe(true);
+  await expect(page.locator('.toast.success').last()).toContainText('Exported 2 frames as PNG');
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('split-frame ZIP handles null PNG serialization and cancellation', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles([gifFile('one.gif'), gifFile('two.gif')]);
+  await page.evaluate(() => {
+    HTMLCanvasElement.prototype.toBlob = function toBlob(callback) {
+      callback(null);
+    };
+  });
+  await page.locator('#splitFramesBtn').click();
+  await expect(page.locator('.toast.error')).toContainText('Browser could not serialize frame 1 as PNG');
+  await expect(page.locator('#exportBtn')).toBeEnabled();
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles([gifFile('one.gif'), gifFile('two.gif')]);
+  await page.evaluate(() => {
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function delayedToBlob(callback, ...args) {
+      setTimeout(() => originalToBlob.call(this, callback, ...args), 250);
+    };
+  });
+  await page.locator('#splitFramesBtn').click();
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'false');
+  await page.locator('#cancelExportBtn').click();
+  await expect(page.locator('.toast.warning')).toContainText('PNG split cancelled');
+  await expect(page.locator('#exportBtn')).toBeEnabled();
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('split-frame ZIP preflight rejects oversized output before allocation', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile());
+  await page.evaluate(() => {
+    editor.estimateZipUpperBound = () => 513 * 1024 * 1024;
+  });
+  let downloads = 0;
+  page.on('download', () => downloads++);
+
+  await page.locator('#splitFramesBtn').click();
+
+  await expect(page.locator('.toast.error')).toContainText('PNG split stopped before allocation');
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+  expect(downloads).toBe(0);
 });
 
 test('missing optional assets fail safely without disabling core GIF export', async ({ page }) => {
