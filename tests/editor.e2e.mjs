@@ -1,10 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 const BASIC_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
-const PAKO_PATH = resolve('node_modules/pako/dist/pako.min.js');
-const UPNG_PATH = resolve('node_modules/upng-js/UPNG.js');
 
 function gifFile(name = 'pixel.gif') {
   return { name, mimeType: 'image/gif', buffer: BASIC_GIF };
@@ -30,18 +27,6 @@ async function readRecoveryRecord(page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js', async route => {
-    await route.fulfill({
-      contentType: 'text/javascript',
-      body: await readFile(PAKO_PATH)
-    });
-  });
-  await page.route('https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.min.js', async route => {
-    await route.fulfill({
-      contentType: 'text/javascript',
-      body: await readFile(UPNG_PATH)
-    });
-  });
   await page.addInitScript(() => {
     Object.defineProperty(window, 'showSaveFilePicker', {
       configurable: true,
@@ -118,7 +103,99 @@ test('APNG export emits PNG and animation control signatures', async ({ page }) 
 
   expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   expect(bytes.includes(Buffer.from('acTL', 'ascii'))).toBe(true);
+  await expect(page.locator('script[src="vendor/pako-2.1.0.min.js"]')).toHaveAttribute(
+    'integrity',
+    'sha256-7eJpOkpqUSa501ZpBis1jsq2rnubhqHPMC/rRahRSQc='
+  );
+  await expect(page.locator('script[src="vendor/upng-2.1.0.js"]')).toHaveAttribute(
+    'integrity',
+    'sha256-t8C9sCHf/rgvGsJ8Z2L5OflnqeTgiGUY/vZJMxthIWQ='
+  );
   await expect(page.locator('#exportModal')).not.toHaveClass(/active/);
+});
+
+test('optional codecs make no cross-origin runtime requests', async ({ page }) => {
+  const externalRequests = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.origin !== 'http://127.0.0.1:18766') externalRequests.push(url.href);
+  });
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles([gifFile('one.gif'), gifFile('two.gif')]);
+  await page.locator('#exportFormat').selectOption('apng');
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#exportBtn').click();
+  await downloadPromise;
+
+  expect(externalRequests).toEqual([]);
+});
+
+test('missing optional assets fail safely without disabling core GIF export', async ({ page }) => {
+  await page.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map(registration => registration.unregister()));
+    const names = await caches.keys();
+    await Promise.all(names.map(name => caches.delete(name)));
+  });
+  await page.addInitScript(() => {
+    navigator.serviceWorker.register = () => Promise.reject(new Error('Service worker disabled for fallback test'));
+  });
+  await page.route('**/vendor/upng-2.1.0.js', route => route.abort());
+  await page.reload();
+  await page.locator('#fileInput').setInputFiles(gifFile());
+  await page.locator('#exportFormat').selectOption('apng');
+  await page.locator('#exportBtn').click();
+  await expect(page.locator('.toast.error')).toContainText('Bundled upng asset is unavailable');
+  await expect(page.locator('#exportBtn')).toBeEnabled();
+
+  await page.locator('#exportFormat').selectOption('gif');
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#exportBtn').click();
+  const download = await downloadPromise;
+  const bytes = await readFile(await download.path());
+  expect(bytes.subarray(0, 6).toString('ascii')).toBe('GIF89a');
+});
+
+test('service worker caches the app shell for offline reload and exposes update UI', async ({ page, context }) => {
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  if (!await page.evaluate(() => Boolean(navigator.serviceWorker.controller))) {
+    await page.reload();
+  }
+  const cachedPaths = await page.evaluate(async () => {
+    const cache = await caches.open('gifstudio-v0.5.2');
+    return (await cache.keys()).map(request => new URL(request.url).pathname);
+  });
+  expect(cachedPaths).toEqual(expect.arrayContaining([
+    '/index.html',
+    '/manifest.json',
+    '/icon.png',
+    '/vendor/pako-2.1.0.min.js',
+    '/vendor/upng-2.1.0.js',
+    '/vendor/gifsicle-wasm-browser-1.5.19.min.js'
+  ]));
+
+  await context.setOffline(true);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: 'Drop files here' })).toBeVisible();
+  await context.setOffline(false);
+
+  await page.evaluate(() => {
+    window.__gifStudioUpdateMessage = null;
+    showUpdateNotice({
+      waiting: {
+        postMessage(message) {
+          window.__gifStudioUpdateMessage = message;
+        }
+      }
+    });
+  });
+  await expect(page.locator('#updateNotice')).toContainText('verified GifStudio update');
+  await page.locator('#updateNotice').getByRole('button', { name: 'Reload' }).click();
+  await expect.poll(() => page.evaluate(() => window.__gifStudioUpdateMessage)).toEqual({
+    type: 'GIFSTUDIO_SKIP_WAITING'
+  });
 });
 
 test('cancelling export ignores late work and restores editor controls', async ({ page }) => {

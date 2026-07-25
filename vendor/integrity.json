@@ -1,0 +1,17 @@
+{
+  "gifsicle-wasm-browser-1.5.19.min.js": {
+    "sha256": "c2b9ef1acd3ca20a0795fec66496a24ec6001f53836113c0255bd4464662a9cd",
+    "integrity": "sha256-wrnvGs08ogoHlf7GZJaiTsYAH1ODYRPAJVvURkZiqc0=",
+    "license": "MIT"
+  },
+  "pako-2.1.0.min.js": {
+    "sha256": "ede2693a4a6a5126b9d35669062b358ecab6ae7b9b86a1cf302feb45a8514907",
+    "integrity": "sha256-7eJpOkpqUSa501ZpBis1jsq2rnubhqHPMC/rRahRSQc=",
+    "license": "MIT AND Zlib"
+  },
+  "upng-2.1.0.js": {
+    "sha256": "b7c0bdb021dffeb82f1ac27c6762f939f967a9e4e0886518fef649331b612164",
+    "integrity": "sha256-t8C9sCHf/rgvGsJ8Z2L5OflnqeTgiGUY/vZJMxthIWQ=",
+    "license": "MIT"
+  }
+}

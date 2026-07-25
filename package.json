@@ -18,6 +18,7 @@
   "license": "MIT",
   "devDependencies": {
     "@playwright/test": "1.62.0",
+    "gifsicle-wasm-browser": "1.5.19",
     "pako": "2.1.0",
     "upng-js": "2.1.0"
   }
