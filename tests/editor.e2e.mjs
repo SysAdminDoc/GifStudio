@@ -67,6 +67,7 @@ test('GIF export emits a valid signature from the shipped page', async ({ page }
   expect(bytes.subarray(0, 6).toString('ascii')).toBe('GIF89a');
   await expect(page.locator('#exportModal')).not.toHaveClass(/active/);
   await expect(page.locator('#exportBtn')).toBeEnabled();
+  await expect(page.locator('#analyzerContent')).toContainText('Validated GIF output · 1×1 · 1 frame');
 });
 
 test('GIF export rounds millisecond delays to centiseconds deterministically', async ({ page }) => {
@@ -103,15 +104,33 @@ test('APNG export emits PNG and animation control signatures', async ({ page }) 
 
   expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   expect(bytes.includes(Buffer.from('acTL', 'ascii'))).toBe(true);
+  await expect(page.locator('#analyzerContent')).toContainText('Image sequence · decoded frames');
+  await expect(page.locator('#analyzerContent')).toContainText('Raw GIF block metadata unavailable');
+  await expect(page.locator('#analyzerContent')).toContainText('Validated APNG output · 1×1 · 2 frames');
   await expect(page.locator('script[src="vendor/pako-2.1.0.min.js"]')).toHaveAttribute(
     'integrity',
     'sha256-7eJpOkpqUSa501ZpBis1jsq2rnubhqHPMC/rRahRSQc='
   );
   await expect(page.locator('script[src="vendor/upng-2.1.0.js"]')).toHaveAttribute(
     'integrity',
-    'sha256-t8C9sCHf/rgvGsJ8Z2L5OflnqeTgiGUY/vZJMxthIWQ='
+    'sha256-aXU5RmOscgzQUVIsdzzmpU41GPc3rl8v3kmD9fz7U+U='
   );
   await expect(page.locator('#exportModal')).not.toHaveClass(/active/);
+});
+
+test('invalid encoded output is rejected before download or success', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile());
+  await page.evaluate(() => {
+    GifEncoder.prototype.render = async () => new Blob(['not-a-gif'], { type: 'image/gif' });
+  });
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await page.locator('#exportBtn').click();
+
+  await expect(page.locator('.toast.error')).toContainText('Output validation failed');
+  await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'true');
+  expect(downloads).toBe(0);
+  await expect(page.locator('#analyzerContent')).toContainText('No exported output has been validated');
 });
 
 test('optional codecs make no cross-origin runtime requests', async ({ page }) => {

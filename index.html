@@ -2120,7 +2120,7 @@
             },
             upng: {
                 src: 'vendor/upng-2.1.0.js',
-                integrity: 'sha256-t8C9sCHf/rgvGsJ8Z2L5OflnqeTgiGUY/vZJMxthIWQ=',
+                integrity: 'sha256-aXU5RmOscgzQUVIsdzzmpU41GPc3rl8v3kmD9fz7U+U=',
                 global: 'UPNG'
             },
             gifsicle: {
@@ -2156,6 +2156,7 @@
                 this._scriptLoads = new Map();
                 this.serviceWorkerStatus = 'not-available';
                 this._modalReturnFocus = null;
+                this.lastOutputValidation = null;
                 this._operationGeneration = 0;
                 this._activeOperation = null;
                 this._activeExportJob = null;
@@ -2269,6 +2270,7 @@
                 this.originalFilename = project.filename || 'edited';
                 this.fileSize = project.fileSize || 0;
                 this.rawGifMeta = project.rawGifMeta || null;
+                this.lastOutputValidation = null;
                 this.sourceTiming = project.sourceTiming || {
                     format: project.sourceFormat || 'Imported',
                     delays: this.frames.map(frame => frame.delay)
@@ -4554,6 +4556,112 @@
                 }
             }
 
+            async validateGIFOutput(blob, job) {
+                try {
+                    const buffer = await blob.arrayBuffer();
+                    const gif = GifDecoder.parseGIF(buffer);
+                    if (gif.width !== job.width || gif.height !== job.height) {
+                        throw new Error(`dimensions are ${gif.width}×${gif.height}, expected ${job.width}×${job.height}`);
+                    }
+                    if (gif.frames.length !== job.frames.length) {
+                        throw new Error(`frame count is ${gif.frames.length}, expected ${job.frames.length}`);
+                    }
+                    const actualDelays = gif.frames.map(frame => (frame.graphicControl?.delay || 0) * 10);
+                    const expectedDelays = job.frames.map(frame => this.getEncodedDelayMs(frame.delay, 'gif'));
+                    if (actualDelays.some((delay, index) => delay !== expectedDelays[index])) {
+                        throw new Error('encoded frame delays do not match the GIF timing model');
+                    }
+                    return {
+                        format: 'GIF',
+                        width: gif.width,
+                        height: gif.height,
+                        frameCount: gif.frames.length,
+                        duration: actualDelays.reduce((sum, delay) => sum + delay, 0),
+                        bytes: blob.size
+                    };
+                } catch (error) {
+                    throw new Error(`Output validation failed: ${error.message}`);
+                }
+            }
+
+            async validateAPNGOutput(blob, job) {
+                try {
+                    const bytes = new Uint8Array(await blob.arrayBuffer());
+                    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+                    if (bytes.length < 8 || signature.some((value, index) => bytes[index] !== value)) {
+                        throw new Error('PNG signature is missing');
+                    }
+                    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+                    let offset = 8;
+                    let width = 0;
+                    let height = 0;
+                    let animationFrames = 0;
+                    const frameControls = [];
+                    let sawEnd = false;
+                    while (offset + 12 <= bytes.length) {
+                        const length = view.getUint32(offset);
+                        if (offset + 12 + length > bytes.length) throw new Error('PNG chunk is truncated');
+                        const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+                        const dataOffset = offset + 8;
+                        if (type === 'IHDR') {
+                            width = view.getUint32(dataOffset);
+                            height = view.getUint32(dataOffset + 4);
+                        } else if (type === 'acTL') {
+                            animationFrames = view.getUint32(dataOffset);
+                        } else if (type === 'fcTL') {
+                            if (length !== 26) throw new Error('APNG frame control has an invalid length');
+                            const frameWidth = view.getUint32(dataOffset + 4);
+                            const frameHeight = view.getUint32(dataOffset + 8);
+                            const xOffset = view.getUint32(dataOffset + 12);
+                            const yOffset = view.getUint32(dataOffset + 16);
+                            if (!frameWidth || !frameHeight || xOffset + frameWidth > width || yOffset + frameHeight > height) {
+                                throw new Error('APNG frame control exceeds the canvas');
+                            }
+                            const delayNumerator = view.getUint16(dataOffset + 20);
+                            const delayDenominator = view.getUint16(dataOffset + 22) || 100;
+                            frameControls.push({
+                                delay: delayNumerator * 1000 / delayDenominator
+                            });
+                        } else if (type === 'IEND') {
+                            sawEnd = true;
+                            break;
+                        }
+                        offset += 12 + length;
+                    }
+                    if (!sawEnd) throw new Error('PNG end chunk is missing');
+                    if (width !== job.width || height !== job.height) {
+                        throw new Error(`dimensions are ${width}×${height}, expected ${job.width}×${job.height}`);
+                    }
+                    if (!animationFrames || animationFrames !== frameControls.length) {
+                        throw new Error(`animation declares ${animationFrames} frames but contains ${frameControls.length} controls`);
+                    }
+                    const expectedDuration = job.frames.reduce(
+                        (sum, frame) => sum + this.getEncodedDelayMs(frame.delay, 'apng'),
+                        0
+                    );
+                    const actualDuration = frameControls.reduce((sum, frame) => sum + frame.delay, 0);
+                    const durationTolerance = Math.max(2, animationFrames);
+                    if (Math.abs(actualDuration - expectedDuration) > durationTolerance) {
+                        throw new Error(`duration is ${Math.round(actualDuration)}ms, expected ${expectedDuration}ms`);
+                    }
+                    return {
+                        format: 'APNG',
+                        width,
+                        height,
+                        frameCount: animationFrames,
+                        duration: actualDuration,
+                        bytes: blob.size
+                    };
+                } catch (error) {
+                    throw new Error(`Output validation failed: ${error.message}`);
+                }
+            }
+
+            recordOutputValidation(validation) {
+                this.lastOutputValidation = validation;
+                this.updateAnalyzer();
+            }
+
             // ============================================
             // Export
             // ============================================
@@ -4627,6 +4735,9 @@
                     }));
 
                     this.assertExportJobCurrent(job);
+                    const validation = await this.waitForExportTask(job, this.validateGIFOutput(blob, job));
+                    this.assertExportJobCurrent(job);
+                    this.recordOutputValidation(validation);
                     this.updateExportProgress(job, 100, 'Export complete', progress, status);
 
                     const sizeText = this.formatBytes(blob.size);
@@ -4773,9 +4884,12 @@
                     const apngBuffer = UPNG.encode(imgs, w, h, cnum, dels);
                     job.maxFrameBlockMs = Math.max(job.maxFrameBlockMs, performance.now() - encodeStarted);
                     this.assertExportJobCurrent(job);
-                    this.updateExportProgress(job, 100, 'Export complete', progress, status);
 
                     const blob = new Blob([apngBuffer], { type: 'image/apng' });
+                    const validation = await this.waitForExportTask(job, this.validateAPNGOutput(blob, job));
+                    this.assertExportJobCurrent(job);
+                    this.recordOutputValidation(validation);
+                    this.updateExportProgress(job, 100, 'Export complete', progress, status);
                     const sizeText = this.formatBytes(blob.size);
                     const filenameInput = document.getElementById('exportFilename');
                     const filename = (filenameInput && filenameInput.value.trim()) || (this.originalFilename + '-edited');
@@ -4909,6 +5023,9 @@
                     if (!result || !result[0]) throw new Error('Optimization produced no output');
 
                     const optimizedBlob = new Blob([result[0]], { type: 'image/gif' });
+                    const validation = await this.waitForExportTask(job, this.validateGIFOutput(optimizedBlob, job));
+                    this.assertExportJobCurrent(job);
+                    this.recordOutputValidation(validation);
                     const reduction = Math.round((1 - optimizedBlob.size / originalSize) * 100);
                     const filenameInput = document.getElementById('exportFilename');
                     const filename = (filenameInput && filenameInput.value.trim() || 'optimized') + '-opt.gif';
@@ -5184,20 +5301,72 @@
 
             updateAnalyzer() {
                 const el = document.getElementById('analyzerContent');
-                if (!el || !this.rawGifMeta) return;
+                if (!el) return;
+                el.replaceChildren();
+                if (this.frames.length === 0) {
+                    el.textContent = 'No source loaded.';
+                    return;
+                }
+
+                const addSummary = (text, color = 'var(--text-secondary)') => {
+                    const line = document.createElement('div');
+                    line.style.cssText = `color:${color};padding:3px 0;`;
+                    line.textContent = text;
+                    el.appendChild(line);
+                };
+                addSummary(
+                    `${this.sourceTiming?.format || 'Imported source'} · decoded frames · ` +
+                    `${this.originalWidth}×${this.originalHeight} · ${this.frames.length} frame${this.frames.length === 1 ? '' : 's'}`,
+                    'var(--text-primary)'
+                );
+                addSummary(this.rawGifMeta
+                    ? 'Raw GIF block metadata available.'
+                    : 'Raw GIF block metadata unavailable; showing decoded frame properties.');
+
                 const disposalNames = ['none', 'keep', 'bg', 'prev'];
-                const rows = this.rawGifMeta.map(f =>
-                    `<div style="display:flex; gap:8px; color:var(--text-secondary); padding:2px 0; border-bottom:1px solid var(--border-subtle);">` +
-                    `<span style="color:var(--text-primary); min-width:24px;">#${f.index}</span>` +
-                    `<span>${f.width}×${f.height}</span>` +
-                    `<span>+${f.left},${f.top}</span>` +
-                    `<span>${f.delay * 10}ms</span>` +
-                    `<span>${disposalNames[f.disposal] || f.disposal}</span>` +
-                    `<span>${f.paletteSize}c</span>` +
-                    (f.transparent ? `<span style="color:var(--accent-primary);">T</span>` : '') +
-                    `</div>`
-                ).join('');
-                el.innerHTML = rows;
+                this.frames.forEach((frame, index) => {
+                    const raw = this.rawGifMeta?.[index];
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex;gap:8px;color:var(--text-secondary);padding:2px 0;border-bottom:1px solid var(--border-subtle);';
+                    const values = raw
+                        ? [
+                            `#${index + 1}`,
+                            `${raw.width}×${raw.height}`,
+                            `+${raw.left},${raw.top}`,
+                            `${frame.delay}ms`,
+                            disposalNames[raw.disposal] || String(raw.disposal),
+                            `${raw.paletteSize}c`,
+                            raw.transparent ? 'transparent' : ''
+                        ]
+                        : [
+                            `#${index + 1}`,
+                            `${frame.canvas.width}×${frame.canvas.height}`,
+                            `${frame.delay}ms`,
+                            disposalNames[frame.disposalType] || String(frame.disposalType)
+                        ];
+                    values.filter(Boolean).forEach((value, valueIndex) => {
+                        const span = document.createElement('span');
+                        span.textContent = value;
+                        if (valueIndex === 0) {
+                            span.style.color = 'var(--text-primary)';
+                            span.style.minWidth = '24px';
+                        }
+                        row.appendChild(span);
+                    });
+                    el.appendChild(row);
+                });
+
+                if (this.lastOutputValidation) {
+                    const output = this.lastOutputValidation;
+                    addSummary(
+                        `Validated ${output.format} output · ${output.width}×${output.height} · ` +
+                        `${output.frameCount} frame${output.frameCount === 1 ? '' : 's'} · ` +
+                        `${this.formatDuration(output.duration)} · ${this.formatBytes(output.bytes)}`,
+                        'var(--success)'
+                    );
+                } else {
+                    addSummary('No exported output has been validated for this project.');
+                }
             }
 
             updateSizeEstimate() {

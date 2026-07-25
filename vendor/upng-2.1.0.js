@@ -386,7 +386,11 @@ UPNG.encode = function(bufs, w, h, ps, dels, forbidPlte)
 {
 	if(ps==null) ps=0;
 	if(forbidPlte==null) forbidPlte = false;
-	var data = new Uint8Array(bufs[0].byteLength*bufs.length+100);
+	// Upstream's raw-bytes + 100 allocation truncates small APNGs and can omit
+	// frame/chunk overhead. Reserve filtered scanlines, worst-case DEFLATE block
+	// overhead, palette metadata, and per-frame APNG control chunks.
+	var rawBytes = bufs[0].byteLength*bufs.length, filteredBytes = rawBytes+h*bufs.length;
+	var data = new Uint8Array(filteredBytes+Math.ceil(filteredBytes/16383)*5+65536+bufs.length*64);
 	var wr=[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 	for(var i=0; i<8; i++) data[i]=wr[i];
 	var offset = 8,  bin = UPNG._bin, crc = UPNG.crc.crc, wUi = bin.writeUint, wUs = bin.writeUshort, wAs = bin.writeASCII;
@@ -817,4 +821,3 @@ UPNG.encode.alphaMul = function(img, roundA) {
 
 })(UPNG, pako);
 })();
-
