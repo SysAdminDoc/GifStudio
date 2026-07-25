@@ -1017,7 +1017,7 @@
                             <div class="info-value" id="infoFrames">-</div>
                         </div>
                         <div class="info-item">
-                            <div class="info-label">Duration</div>
+                            <div class="info-label">Edited / Output</div>
                             <div class="info-value" id="infoDuration">-</div>
                         </div>
                         <div class="info-item">
@@ -1136,9 +1136,11 @@
                     <div class="sidebar-title">Frame Timing</div>
                     <div class="tool-group">
                         <div class="input-group">
-                            <label class="input-label" for="frameDelay">Delay (ms)</label>
-                            <input type="number" id="frameDelay" value="100" min="10" max="5000" step="10">
+                            <label class="input-label" id="frameDelayLabel" for="frameDelay">Delay (centiseconds)</label>
+                            <input type="number" id="frameDelay" value="10" min="1" max="500" step="1">
                         </div>
+                        <p id="timingSummary" style="font-size:11px; color:var(--text-secondary); margin:0;"></p>
+                        <p id="timingWarning" role="status" style="font-size:11px; color:var(--warning); margin:0;"></p>
                         <div class="input-row">
                             <button class="btn btn-secondary" id="applyDelaySelected" style="flex: 1;">
                                 Apply to Selected
@@ -2132,6 +2134,7 @@
                 this._activeExportJob = null;
                 this._exportGeneration = 0;
                 this._projectGeneration = 0;
+                this.sourceTiming = null;
 
                 // Crop state
                 this.cropRect = { x: 0, y: 0, w: 100, h: 100 };
@@ -2239,6 +2242,10 @@
                 this.originalFilename = project.filename || 'edited';
                 this.fileSize = project.fileSize || 0;
                 this.rawGifMeta = project.rawGifMeta || null;
+                this.sourceTiming = project.sourceTiming || {
+                    format: project.sourceFormat || 'Imported',
+                    delays: this.frames.map(frame => frame.delay)
+                };
                 this.cropRect = { x: 0, y: 0, w: project.width, h: project.height };
                 this.selectedFrames.clear();
                 this._projectGeneration++;
@@ -2249,6 +2256,7 @@
                     filenameInput.value = project.exportFilename || `${this.originalFilename}-edited`;
                 }
                 this.showEditor();
+                this.syncTimingControls();
                 this.scheduleAutosave();
             }
 
@@ -2402,6 +2410,7 @@
                         currentFrame: session.currentFrame,
                         filename: session.filename || 'recovered',
                         rawGifMeta: null,
+                        sourceFormat: 'Recovered session',
                         exportFilename: `${session.filename || 'recovered'}-edited`
                     }, token);
                     this.showToast(`Restored ${restoredFrames.length} frames`, 'success');
@@ -2654,6 +2663,7 @@
                 // Export settings that affect size estimate
                 document.getElementById('colorCount').addEventListener('change', () => this.updateSizeEstimate());
                 document.getElementById('ditherSelect').addEventListener('change', () => this.updateSizeEstimate());
+                document.getElementById('exportFormat').addEventListener('change', () => this.syncTimingControls());
 
                 // Export
                 document.getElementById('exportBtn').addEventListener('click', () => {
@@ -2819,6 +2829,7 @@
                     const filename = file.name.replace(/\.gif$/i, '') || 'edited';
                     project.filename = filename;
                     project.fileSize = file.size;
+                    project.sourceFormat = 'GIF';
                     project.exportFilename = `${filename}-edited`;
                     this.commitProject(project, token);
                     const frameCount = project.frames.length;
@@ -2882,7 +2893,8 @@
                         width,
                         height,
                         currentFrame: 0,
-                        rawGifMeta: null
+                        rawGifMeta: null,
+                        sourceFormat: 'GIF'
                     };
                 } catch (error) {
                     decodedFrames.forEach(frame => this.releaseCanvas(frame.canvas));
@@ -2938,6 +2950,7 @@
                         height: maxH,
                         currentFrame: 0,
                         rawGifMeta: null,
+                        sourceFormat: 'Image sequence',
                         fileSize: imageFiles.reduce((sum, item) => sum + item.size, 0),
                         filename,
                         exportFilename: `${filename}-animated`
@@ -3365,7 +3378,7 @@
                 this.renderFrame();
 
                 // Update delay input
-                document.getElementById('frameDelay').value = this.frames[index].delay;
+                this.updateDelayInput();
             }
 
             // ============================================
@@ -3479,20 +3492,21 @@
             applyDelayToSelected() {
                 if (this.frames.length === 0 || !this.prepareMutation()) return;
                 this.saveUndoState('Change frame delay');
-                const delay = parseInt(document.getElementById('frameDelay').value) || 100;
+                const delay = this.readDelayInput();
                 const targets = (this.selectedFrames.size > 1
                     ? [...this.selectedFrames]
                     : [this.currentFrame]).filter(i => i < this.frames.length);
                 targets.forEach(i => { this.frames[i].delay = delay; });
                 this.renderTimeline();
                 this.renderFrame();
+                this.updateGIFInfo();
                 this.showToast(`Delay applied to ${targets.length} frame${targets.length > 1 ? 's' : ''}`, 'success');
             }
 
             applyDelayToAll() {
                 if (this.frames.length === 0 || !this.prepareMutation()) return;
                 this.saveUndoState('Change all delays');
-                const delay = parseInt(document.getElementById('frameDelay').value) || 100;
+                const delay = this.readDelayInput();
                 this.frames.forEach(f => f.delay = delay);
                 this.renderTimeline();
                 this.updateGIFInfo();
@@ -4713,13 +4727,111 @@
             // UI Helpers
             // ============================================
 
+            getExportFormat() {
+                return document.getElementById('exportFormat')?.value || 'gif';
+            }
+
+            getEncodedDelayMs(delay, format = this.getExportFormat()) {
+                const milliseconds = Math.max(1, Math.round(Number(delay) || 0));
+                return format === 'gif' ? Math.max(10, Math.round(milliseconds / 10) * 10) : milliseconds;
+            }
+
+            getTimingModel(format = this.getExportFormat()) {
+                const editedDelays = this.frames.map(frame => frame.delay);
+                const outputDelays = editedDelays.map(delay => this.getEncodedDelayMs(delay, format));
+                return {
+                    format,
+                    editedDelays,
+                    outputDelays,
+                    editedDuration: editedDelays.reduce((sum, delay) => sum + delay, 0),
+                    outputDuration: outputDelays.reduce((sum, delay) => sum + delay, 0)
+                };
+            }
+
+            formatDuration(milliseconds) {
+                return `${(milliseconds / 1000).toFixed(2)}s`;
+            }
+
+            updateDelayInput() {
+                if (this.frames.length === 0) return;
+                const input = document.getElementById('frameDelay');
+                const delay = this.frames[this.currentFrame]?.delay || 100;
+                input.value = this.getExportFormat() === 'gif'
+                    ? String(delay / 10)
+                    : String(delay);
+            }
+
+            readDelayInput() {
+                const value = Number.parseFloat(document.getElementById('frameDelay').value);
+                if (this.getExportFormat() === 'gif') {
+                    return Math.max(10, Math.min(5000, Math.round((Number.isFinite(value) ? value : 10) * 10)));
+                }
+                return Math.max(1, Math.min(5000, Math.round(Number.isFinite(value) ? value : 100)));
+            }
+
+            syncTimingControls() {
+                const format = this.getExportFormat();
+                const input = document.getElementById('frameDelay');
+                const label = document.getElementById('frameDelayLabel');
+                if (format === 'gif') {
+                    label.textContent = 'Delay (centiseconds)';
+                    input.min = '1';
+                    input.max = '500';
+                    input.step = '1';
+                } else {
+                    label.textContent = 'Delay (milliseconds)';
+                    input.min = '1';
+                    input.max = '5000';
+                    input.step = '1';
+                }
+                this.updateDelayInput();
+                this.updateGIFInfo();
+            }
+
+            updateTimingSummary(model = this.getTimingModel()) {
+                const summary = document.getElementById('timingSummary');
+                const warning = document.getElementById('timingWarning');
+                if (!summary || !warning || this.frames.length === 0) return;
+
+                const sourceDelays = this.sourceTiming?.delays || [];
+                const sourceDuration = sourceDelays.reduce((sum, delay) => sum + delay, 0);
+                const currentOutputDelay = model.outputDelays[this.currentFrame] || 0;
+                const fps = currentOutputDelay > 0 ? (1000 / currentOutputDelay).toFixed(2) : '—';
+                const unit = model.format === 'gif'
+                    ? `${currentOutputDelay / 10} cs`
+                    : `${currentOutputDelay} ms`;
+                summary.textContent =
+                    `Source (${this.sourceTiming?.format || 'Imported'}): ${this.formatDuration(sourceDuration)} · ` +
+                    `${model.format.toUpperCase()} output: ${this.formatDuration(model.outputDuration)} · ` +
+                    `selected ${unit} (${fps} FPS)`;
+
+                const warnings = [];
+                if (model.format === 'gif') {
+                    const editedDelay = model.editedDelays[this.currentFrame] || 0;
+                    if (editedDelay !== currentOutputDelay) {
+                        warnings.push(`Selected delay rounds ${editedDelay}ms → ${currentOutputDelay}ms for GIF.`);
+                    }
+                    if (model.outputDelays.some(delay => delay < 20)) {
+                        warnings.push('Some GIF viewers clamp delays below 20ms; validate the target viewer.');
+                    }
+                    if (model.outputDelays.some(delay => delay >= 3000)) {
+                        warnings.push('Long GIF delays may be rewritten by downstream converters; validate the exported file.');
+                    }
+                } else {
+                    warnings.push('APNG stores millisecond delays; actual display scheduling still depends on the viewer.');
+                }
+                warning.textContent = warnings.join(' ');
+            }
+
             updateGIFInfo() {
                 document.getElementById('infoDimensions').textContent = `${this.originalWidth}×${this.originalHeight}`;
                 document.getElementById('infoFrames').textContent = this.frames.length;
 
-                const totalDuration = this.frames.reduce((sum, f) => sum + f.delay, 0);
-                document.getElementById('infoDuration').textContent = (totalDuration / 1000).toFixed(2) + 's';
+                const timing = this.getTimingModel();
+                document.getElementById('infoDuration').textContent =
+                    `${this.formatDuration(timing.editedDuration)} / ${this.formatDuration(timing.outputDuration)}`;
                 document.getElementById('infoSize').textContent = this.formatBytes(this.fileSize);
+                this.updateTimingSummary(timing);
                 this.updateSizeEstimate();
             }
 
@@ -4755,7 +4867,8 @@
                 const overhead = 800 + this.frames.length * (20 + colorCount * 3);
                 const estimated = Math.round(overhead + bytesPerFrame * this.frames.length);
 
-                el.textContent = '~' + this.formatBytes(estimated);
+                const outputDuration = this.getTimingModel().outputDuration;
+                el.textContent = `~${this.formatBytes(estimated)} · ${this.formatDuration(outputDuration)}`;
 
                 const limits = [
                     { name: 'Discord', max: 8 * 1024 * 1024 },

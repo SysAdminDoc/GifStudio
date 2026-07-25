@@ -67,8 +67,13 @@ test('GIF export emits a valid signature from the shipped page', async ({ page }
 
 test('GIF export rounds millisecond delays to centiseconds deterministically', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile());
+  await page.locator('#exportFormat').selectOption('apng');
   await page.locator('#frameDelay').fill('15');
   await page.locator('#applyDelayAll').click();
+  await page.locator('#exportFormat').selectOption('gif');
+  await expect(page.locator('#frameDelayLabel')).toHaveText('Delay (centiseconds)');
+  await expect(page.locator('#timingSummary')).toContainText('selected 2 cs (50.00 FPS)');
+  await expect(page.locator('#timingWarning')).toContainText('rounds 15ms → 20ms');
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#exportBtn').click();
@@ -118,7 +123,7 @@ test('cancelling export ignores late work and restores editor controls', async (
 
 test('autosave recovery restores frame state after reload', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('recovery.gif'));
-  await page.locator('#frameDelay').fill('230');
+  await page.locator('#frameDelay').fill('23');
   await page.locator('#applyDelayAll').click();
   await page.waitForTimeout(2_500);
 
