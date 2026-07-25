@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { readInlineScripts } from './load-inline-code.mjs';
+import { readInlineScripts, readSourceScripts } from './load-inline-code.mjs';
 
 const root = new URL('../', import.meta.url);
 const html = fs.readFileSync(new URL('index.html', root), 'utf8');
@@ -13,9 +13,16 @@ const serviceWorker = fs.readFileSync(new URL('coi-serviceworker.js', root), 'ut
 const integrityManifest = JSON.parse(fs.readFileSync(new URL('vendor/integrity.json', root), 'utf8'));
 
 const scripts = readInlineScripts();
+const sourceScripts = readSourceScripts();
 assert.equal(scripts.length, 3, 'the shipped artifact must contain three inline scripts');
+assert.equal(sourceScripts.length, 3, 'three JavaScript source boundaries are required');
 scripts.forEach((source, index) => {
   new vm.Script(source, { filename: `index.html#inline-script-${index + 1}` });
+  new vm.Script(sourceScripts[index], {
+    filename: ['src/gif-decoder.js', 'src/gif-encoder.js', 'src/app.js'][index]
+  });
+  const normalizedInline = source.replace(/^\n/, '').replace(/\n\s*$/, '');
+  assert.equal(normalizedInline, sourceScripts[index], `inline script ${index + 1} differs from its source boundary`);
 });
 new vm.Script(serviceWorker, { filename: 'coi-serviceworker.js' });
 

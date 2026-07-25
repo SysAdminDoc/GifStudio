@@ -86,12 +86,21 @@ GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 ch
 ```powershell
 npm ci
 npx playwright install chromium
+npm run build:artifact
 npm test
 npm run lint
 npm run build
 ```
 
-`npm test` runs strict parser fixtures and Playwright against the shipped `index.html`. The static release check also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
+JavaScript source is maintained in three boundaries:
+
+- `src/gif-decoder.js` — strict GIF parser/decompressor, loaded directly by Node unit tests
+- `src/gif-encoder.js` — bundled gifenc core and the GifStudio encoder wrapper
+- `src/app.js` — editor state, storage, operations, exporters, and UI behavior
+
+`src/index.template.html` owns the document/CSS shell. `npm run build:artifact` normalizes line endings and embeds those boundaries to generate the zero-install `index.html`; do not hand-edit the generated scripts. `npm run check:artifact` fails on any byte drift, and `.gitattributes` pins text files to LF so a clean checkout reproduces the same artifact across platforms.
+
+`npm test` first checks artifact reproducibility, then runs strict parser fixtures directly against `src/gif-decoder.js` and Playwright against the shipped `index.html`. The static release check parses both source and embedded scripts and also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
 
 ## License
 

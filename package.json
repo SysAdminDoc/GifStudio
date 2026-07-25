@@ -5,11 +5,13 @@
   "description": "Test and release tooling for the single-file GifStudio browser app",
   "type": "module",
   "scripts": {
-    "test": "npm run test:unit && npm run test:e2e",
+    "test": "npm run check:artifact && npm run test:unit && npm run test:e2e",
     "test:unit": "node --test tests/gif-decoder.test.mjs",
     "test:e2e": "playwright test",
-    "lint": "node scripts/release-check.mjs",
-    "build": "node scripts/release-check.mjs",
+    "build:artifact": "node scripts/build-artifact.mjs --write",
+    "check:artifact": "node scripts/build-artifact.mjs --check",
+    "lint": "npm run check:artifact && node scripts/release-check.mjs",
+    "build": "npm run check:artifact && node scripts/release-check.mjs",
     "serve": "node scripts/serve.mjs"
   },
   "engines": {
