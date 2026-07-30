@@ -1550,6 +1550,12 @@
                     <p id="diagnosticsDescription" style="font-size:11px;color:var(--text-muted);line-height:1.5;margin:0 0 8px;">
                         Copies capability and error text only—never frames, filenames, URLs, or telemetry.
                     </p>
+                    <p id="storageDurabilityStatus" role="status" style="font-size:11px;color:var(--text-secondary);line-height:1.5;margin:0 0 8px;">
+                        Checking recovery storage…
+                    </p>
+                    <button class="btn btn-secondary" id="requestPersistenceBtn" style="width:100%;margin-bottom:8px;" hidden>
+                        Request persistent storage
+                    </button>
                     <button class="btn btn-secondary" id="copyDiagnosticsBtn" aria-describedby="diagnosticsDescription" style="width:100%;">
                         Copy Diagnostics
                     </button>
@@ -2398,6 +2404,12 @@
                 this._lastSavedGeneration = 0;
                 this._storageErrorShown = false;
                 this.storageStatus = 'checking';
+                this.storageTelemetry = {
+                    usage: null,
+                    quota: null,
+                    persisted: null,
+                    persistenceSupported: false
+                };
                 this.recoveryCoordinationStatus = 'initializing';
                 this._recoveryInstanceId = this.createRecoveryId('instance');
                 this._recoveryOwnerId = this.loadRecoveryOwnerId();
@@ -2462,6 +2474,7 @@
                 this.setActiveTool('select');
                 this.setDropZoneActive(true);
                 this.initializeRecoveryCoordination();
+                this.refreshStorageStatus();
                 this.checkSessionRecovery();
             }
 
@@ -2994,10 +3007,79 @@
                 const quota = error?.name === 'QuotaExceededError';
                 this.showToast(
                     quota
-                        ? 'Local recovery storage is full. Export your work, then dismiss an older recovery.'
+                        ? 'Local recovery storage is full. The previous recovery was retained; export your work, then free browser site storage.'
                         : 'Local recovery is unavailable. Keep this tab open and export your work before leaving.',
                     'error'
                 );
+            }
+
+            updateStorageDurabilityUI() {
+                const status = document.getElementById('storageDurabilityStatus');
+                const button = document.getElementById('requestPersistenceBtn');
+                const telemetry = this.storageTelemetry;
+                if (status) {
+                    const usage = Number.isFinite(telemetry.usage) && Number.isFinite(telemetry.quota)
+                        ? `${this.formatBytes(telemetry.usage)} of ${this.formatBytes(telemetry.quota)} used`
+                        : 'Usage unavailable';
+                    const durability = telemetry.persisted === true
+                        ? 'persistent'
+                        : telemetry.persisted === false
+                            ? 'best effort'
+                            : 'durability unknown';
+                    status.textContent = `${usage} · ${durability}`;
+                }
+                if (button) {
+                    button.hidden = !telemetry.persistenceSupported;
+                    button.disabled = telemetry.persisted === true;
+                    button.textContent = telemetry.persisted === true
+                        ? 'Persistent storage granted'
+                        : 'Request persistent storage';
+                }
+            }
+
+            async refreshStorageStatus() {
+                const storage = navigator.storage;
+                this.storageTelemetry.persistenceSupported = typeof storage?.persist === 'function';
+                try {
+                    const [estimate, persisted] = await Promise.all([
+                        typeof storage?.estimate === 'function'
+                            ? storage.estimate()
+                            : Promise.resolve({}),
+                        typeof storage?.persisted === 'function'
+                            ? storage.persisted()
+                            : Promise.resolve(null)
+                    ]);
+                    this.storageTelemetry.usage = Number.isFinite(estimate?.usage) ? estimate.usage : null;
+                    this.storageTelemetry.quota = Number.isFinite(estimate?.quota) ? estimate.quota : null;
+                    this.storageTelemetry.persisted = typeof persisted === 'boolean' ? persisted : null;
+                } catch (error) {
+                    this.recordDiagnosticError(error.message, 'storage-status');
+                }
+                this.updateStorageDurabilityUI();
+                return this.storageTelemetry;
+            }
+
+            async requestPersistentStorage() {
+                if (typeof navigator.storage?.persist !== 'function') {
+                    this.showToast('This browser does not expose persistent storage requests; autosave remains best effort.', 'warning');
+                    return false;
+                }
+                try {
+                    const granted = await navigator.storage.persist();
+                    this.storageTelemetry.persisted = Boolean(granted);
+                    await this.refreshStorageStatus();
+                    this.showToast(
+                        granted
+                            ? 'Persistent recovery storage granted for this site.'
+                            : 'Persistent storage was not granted; autosave continues with best-effort recovery.',
+                        granted ? 'success' : 'warning'
+                    );
+                    return granted;
+                } catch (error) {
+                    this.recordDiagnosticError(error.message, 'storage-persistence');
+                    this.showToast('Persistent storage request failed; autosave continues with best-effort recovery.', 'warning');
+                    return false;
+                }
             }
 
             scheduleAutosave() {
@@ -3601,6 +3683,10 @@
                     event => this.splitFramesToPNG(event.currentTarget)
                 );
                 document.getElementById('copyDiagnosticsBtn').addEventListener('click', () => this.copyDiagnostics());
+                document.getElementById('requestPersistenceBtn').addEventListener(
+                    'click',
+                    () => this.requestPersistentStorage()
+                );
                 document.getElementById('shareBtn').addEventListener('click', async () => {
                     if (this.lastExportFile) {
                         try { await navigator.share({ files: [this.lastExportFile] }); } catch {}
@@ -6436,6 +6522,17 @@
                     `Service worker state: ${this.serviceWorkerStatus}`,
                     `Offline cache controlled: ${yesNo(Boolean(navigator.serviceWorker?.controller))}`,
                     `Recovery storage: ${this.storageStatus}`,
+                    `Storage usage: ${Number.isFinite(this.storageTelemetry.usage) &&
+                        Number.isFinite(this.storageTelemetry.quota)
+                        ? `${this.storageTelemetry.usage} of ${this.storageTelemetry.quota} bytes`
+                        : 'unavailable'}`,
+                    `Storage persistence: ${this.storageTelemetry.persisted === true
+                        ? 'granted'
+                        : this.storageTelemetry.persisted === false
+                            ? 'not granted'
+                            : this.storageTelemetry.persistenceSupported
+                                ? 'unknown'
+                                : 'unsupported'}`,
                     `Recovery coordination: ${this.recoveryCoordinationStatus}`,
                     `IndexedDB: ${yesNo('indexedDB' in window)}`,
                     `WebAssembly: ${yesNo(typeof WebAssembly !== 'undefined')}`,

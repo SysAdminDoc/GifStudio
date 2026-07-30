@@ -980,7 +980,9 @@ test('mobile drawer reports state, restores focus, and fits 390px', async ({ pag
   await menu.click();
   await expect(menu).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#sidebar')).toHaveClass(/open/);
-  await expect(page.locator('#copyDiagnosticsBtn')).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toMatch(
+    /^(requestPersistenceBtn|copyDiagnosticsBtn)$/
+  );
 
   await page.keyboard.press('Escape');
   await expect(menu).toHaveAttribute('aria-expanded', 'false');

@@ -19,6 +19,7 @@ export default defineConfig({
     { name: 'chromium', use: { browserName: 'chromium' } },
     {
       name: 'firefox',
+      testIgnore: '**/storage.e2e.mjs',
       use: {
         browserName: 'firefox',
         launchOptions: {

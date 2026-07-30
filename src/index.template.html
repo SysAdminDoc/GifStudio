@@ -1550,6 +1550,12 @@
                     <p id="diagnosticsDescription" style="font-size:11px;color:var(--text-muted);line-height:1.5;margin:0 0 8px;">
                         Copies capability and error text only—never frames, filenames, URLs, or telemetry.
                     </p>
+                    <p id="storageDurabilityStatus" role="status" style="font-size:11px;color:var(--text-secondary);line-height:1.5;margin:0 0 8px;">
+                        Checking recovery storage…
+                    </p>
+                    <button class="btn btn-secondary" id="requestPersistenceBtn" style="width:100%;margin-bottom:8px;" hidden>
+                        Request persistent storage
+                    </button>
                     <button class="btn btn-secondary" id="copyDiagnosticsBtn" aria-describedby="diagnosticsDescription" style="width:100%;">
                         Copy Diagnostics
                     </button>
