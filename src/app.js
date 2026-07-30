@@ -80,6 +80,7 @@
                 this._exportGeneration = 0;
                 this._projectGeneration = 0;
                 this.sourceTiming = null;
+                this.lastDecoderPath = 'none';
                 this.lastDiagnosticError = null;
                 this.memoryTelemetry = {
                     peakEstimatedBytes: 0,
@@ -360,6 +361,7 @@
                 this.originalFilename = project.filename || 'edited';
                 this.fileSize = project.fileSize || 0;
                 this.rawGifMeta = project.rawGifMeta || null;
+                this.lastDecoderPath = project.decoderPath || 'not applicable';
                 this.lastOutputValidation = null;
                 this.sourceTiming = project.sourceTiming || {
                     format: project.sourceFormat || 'Imported',
@@ -1232,12 +1234,15 @@
                 document.getElementById('exportFormat').addEventListener('change', () => this.syncTimingControls());
 
                 // Export
-                document.getElementById('exportBtn').addEventListener('click', () => {
+                document.getElementById('exportBtn').addEventListener('click', event => {
                     const fmt = document.getElementById('exportFormat').value;
-                    if (fmt === 'apng') this.exportAPNG();
-                    else this.exportGIF();
+                    if (fmt === 'apng') this.exportAPNG(event.currentTarget);
+                    else this.exportGIF(event.currentTarget);
                 });
-                document.getElementById('splitFramesBtn').addEventListener('click', () => this.splitFramesToPNG());
+                document.getElementById('splitFramesBtn').addEventListener(
+                    'click',
+                    event => this.splitFramesToPNG(event.currentTarget)
+                );
                 document.getElementById('copyDiagnosticsBtn').addEventListener('click', () => this.copyDiagnostics());
                 document.getElementById('shareBtn').addEventListener('click', async () => {
                     if (this.lastExportFile) {
@@ -1303,7 +1308,10 @@
                 document.getElementById('optimizeLossy').addEventListener('input', (e) => {
                     document.getElementById('optimizeLossyVal').textContent = e.target.value;
                 });
-                document.getElementById('optimizeBtn').addEventListener('click', () => this.optimizeGIF());
+                document.getElementById('optimizeBtn').addEventListener(
+                    'click',
+                    event => this.optimizeGIF(event.currentTarget)
+                );
 
                 // Playback modes
                 document.querySelectorAll('.playback-mode-btn').forEach(btn => {
@@ -1363,10 +1371,19 @@
                 modal.classList.remove('active');
                 modal.setAttribute('aria-hidden', 'true');
                 modal.setAttribute('inert', '');
-                if (returnFocus && this._modalReturnFocus?.isConnected) {
-                    this._modalReturnFocus.focus();
-                }
+                const returnTarget = returnFocus && this._modalReturnFocus?.isConnected
+                    ? this._modalReturnFocus
+                    : null;
                 this._modalReturnFocus = null;
+                if (returnTarget) {
+                    const restoreFocus = () => {
+                        if (returnTarget.isConnected && !returnTarget.disabled) {
+                            returnTarget.focus({ preventScroll: true });
+                        }
+                    };
+                    restoreFocus();
+                    requestAnimationFrame(() => setTimeout(restoreFocus, 0));
+                }
             }
 
             trapExportModalFocus(event) {
@@ -1417,10 +1434,23 @@
                 try {
                     const buffer = await file.arrayBuffer();
                     this.assertOperationCurrent(token);
+                    const gif = GifDecoder.parseGIF(buffer);
+                    const gifW = gif.width, gifH = gif.height;
+                    const budget = GifDecoder.validateBudget(gifW, gifH, gif.frames.length);
+                    const rawGifMeta = gif.frames.map((f, i) => ({
+                        index: i + 1,
+                        left: f.left, top: f.top, width: f.width, height: f.height,
+                        interlaced: f.interlaced,
+                        paletteSize: f.colorTable ? f.colorTable.length : 0,
+                        delay: f.graphicControl ? f.graphicControl.delay : 0,
+                        disposal: f.graphicControl ? f.graphicControl.disposalMethod : 0,
+                        transparent: f.graphicControl ? f.graphicControl.transparentFlag : 0
+                    }));
 
                     if (typeof ImageDecoder !== 'undefined') {
                         try {
                             project = await this.decodeWithImageDecoder(buffer, token);
+                            if (project) project.decoderPath = 'native ImageDecoder';
                         } catch (error) {
                             if (error.name === 'AbortError' || error.name === 'MemoryBudgetError') throw error;
                             project = null;
@@ -1428,9 +1458,6 @@
                     }
 
                     if (!project) {
-                        const gif = GifDecoder.parseGIF(buffer);
-                        const gifW = gif.width, gifH = gif.height;
-                        const budget = GifDecoder.validateBudget(gifW, gifH, gif.frames.length);
                         this.preflightMemory('GIF import', {
                             width: gifW,
                             height: gifH,
@@ -1444,20 +1471,11 @@
                             this.showToast(`Warning: decoded frames require about ${this.formatBytes(budget.decodedBytes)}`, 'warning');
                         }
 
-                        const rawGifMeta = gif.frames.map((f, i) => ({
-                            index: i + 1,
-                            left: f.left, top: f.top, width: f.width, height: f.height,
-                            interlaced: f.interlaced,
-                            paletteSize: f.colorTable ? f.colorTable.length : 0,
-                            delay: f.graphicControl ? f.graphicControl.delay : 0,
-                            disposal: f.graphicControl ? f.graphicControl.disposalMethod : 0,
-                            transparent: f.graphicControl ? f.graphicControl.transparentFlag : 0
-                        }));
-
                         const frames = GifDecoder.decompressFrames(gif, true);
                         project = this.composeFrames(frames);
-                        project.rawGifMeta = rawGifMeta;
+                        project.decoderPath = 'strict JavaScript parser';
                     }
+                    project.rawGifMeta = rawGifMeta;
 
                     this.assertOperationCurrent(token);
                     if (!project || project.frames.length === 0) {
@@ -2847,7 +2865,11 @@
                 }
             }
 
-            beginExportJob(kind, temporaryCopies = kind === 'GIF optimization' ? 4 : 3) {
+            beginExportJob(
+                kind,
+                temporaryCopies = kind === 'GIF optimization' ? 4 : 3,
+                returnFocus = document.activeElement
+            ) {
                 if (this.frames.length === 0) return null;
                 if (this._activeOperation) {
                     this.showToast(`Wait for ${this._activeOperation.kind} to finish`, 'warning');
@@ -2858,7 +2880,6 @@
                     return null;
                 }
 
-                const returnFocus = document.activeElement;
                 this.stopPlayback();
                 const memoryEstimate = this.preflightMemory(kind, {
                     width: this.originalWidth,
@@ -3071,10 +3092,10 @@
             // Export
             // ============================================
 
-            async exportGIF() {
+            async exportGIF(returnFocus = document.activeElement) {
                 let job;
                 try {
-                    job = this.beginExportJob('GIF export');
+                    job = this.beginExportJob('GIF export', 3, returnFocus);
                 } catch (error) {
                     this.showToast('Could not start export: ' + error.message, 'error');
                     return;
@@ -3235,10 +3256,10 @@
                 if (!window.UPNG) await this.loadOptionalAsset('upng');
             }
 
-            async exportAPNG() {
+            async exportAPNG(returnFocus = document.activeElement) {
                 let job;
                 try {
-                    job = this.beginExportJob('APNG export');
+                    job = this.beginExportJob('APNG export', 3, returnFocus);
                 } catch (error) {
                     this.showToast('Could not start export: ' + error.message, 'error');
                     return;
@@ -3342,10 +3363,10 @@
             // GIF Optimization (gifsicle-wasm)
             // ============================================
 
-            async optimizeGIF() {
+            async optimizeGIF(returnFocus = document.activeElement) {
                 let job;
                 try {
-                    job = this.beginExportJob('GIF optimization');
+                    job = this.beginExportJob('GIF optimization', 4, returnFocus);
                 } catch (error) {
                     this.showToast('Could not start optimization: ' + error.message, 'error');
                     return;
@@ -3479,7 +3500,7 @@
             // Frame Split
             // ============================================
 
-            async splitFramesToPNG() {
+            async splitFramesToPNG(returnFocus = document.activeElement) {
                 if (this.frames.length === 0) return;
                 const estimatedArchiveBytes = this.estimateZipUpperBound(
                     this.originalWidth,
@@ -3498,7 +3519,7 @@
 
                 let job;
                 try {
-                    job = this.beginExportJob('PNG frame split', 4);
+                    job = this.beginExportJob('PNG frame split', 4, returnFocus);
                 } catch (error) {
                     this.showToast('Could not start PNG split: ' + error.message, 'error');
                     return;
@@ -3992,6 +4013,7 @@
                     `Frame count: ${this.frames.length}`,
                     `Selected format: ${this.getExportFormat().toUpperCase()}`,
                     `Source metadata: ${!hasProject ? 'none' : this.rawGifMeta ? 'raw GIF blocks available' : 'decoded frames only'}`,
+                    `Decoder used: ${hasProject ? this.lastDecoderPath : 'none'}`,
                     `Validated output: ${output
                         ? `${output.format}, ${output.width}x${output.height}, ${output.frameCount} frames, ${Math.round(output.duration)}ms, ${output.bytes} bytes`
                         : 'none'}`,
@@ -4006,7 +4028,7 @@
                         : 'none'}`,
                     '',
                     'Capabilities and fallbacks',
-                    `ImageDecoder: ${yesNo(nativeDecoder)} (${nativeDecoder ? 'preferred GIF decoder' : 'strict JavaScript GIF decoder fallback'})`,
+                    `ImageDecoder: ${yesNo(nativeDecoder)} (${nativeDecoder ? 'optional pixel decoder after strict structural validation' : 'strict JavaScript pixel decoder'})`,
                     `File System Access: ${yesNo(filePicker)} (${filePicker ? 'direct save' : 'download fallback'})`,
                     `File sharing: ${yesNo(fileShare)} (${fileShare ? 'share button after compatible GIF export' : 'share control hidden'})`,
                     `Clipboard write: ${yesNo(clipboard)} (${clipboard ? 'async clipboard' : 'temporary text selection fallback'})`,

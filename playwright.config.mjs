@@ -6,17 +6,33 @@ export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.e2e.mjs',
   outputDir: join(tmpdir(), 'gifstudio-playwright-results'),
-  fullyParallel: true,
-  workers: 4,
+  fullyParallel: false,
+  workers: 3,
+  timeout: 60_000,
   forbidOnly: true,
   retries: process.env.CI ? 1 : 0,
   reporter: 'line',
   expect: {
     timeout: 10_000
   },
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    {
+      name: 'firefox',
+      use: {
+        browserName: 'firefox',
+        launchOptions: {
+          firefoxUserPrefs: {
+            'gfx.webrender.force-disabled': true,
+            'layers.acceleration.disabled': true
+          }
+        }
+      }
+    },
+    { name: 'webkit', use: { browserName: 'webkit' } }
+  ],
   use: {
     baseURL: 'http://127.0.0.1:18766',
-    browserName: 'chromium',
     headless: true,
     viewport: { width: 1280, height: 900 }
   },
