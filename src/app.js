@@ -7,6 +7,7 @@
         const RECOVERY_LEASE_MS = 30_000;
         const RECOVERY_HEARTBEAT_MS = 10_000;
         const RECOVERY_KEY_PREFIX = 'session:';
+        const SIDEBAR_STATE_KEY = 'gifstudioSidebarSectionsV1';
         const MEBIBYTE = 1024 * 1024;
         const MEMORY_LIMITS = Object.freeze({
             lowDeviceDefault: 256 * MEBIBYTE,
@@ -126,12 +127,82 @@
             }
 
             init() {
+                this.initializeSidebarSections();
                 this.bindEvents();
                 this.setActiveTool('select');
                 this.setDropZoneActive(true);
                 this.initializeRecoveryCoordination();
                 this.refreshStorageStatus();
                 this.checkSessionRecovery();
+            }
+
+            initializeSidebarSections() {
+                const defaultExpanded = new Set([
+                    'gifInfoSection',
+                    'exportSection',
+                    'diagnosticsSection'
+                ]);
+                let savedState = {};
+                try {
+                    const stored = JSON.parse(localStorage.getItem(SIDEBAR_STATE_KEY) || '{}');
+                    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+                        savedState = stored;
+                    }
+                } catch {}
+
+                document.querySelectorAll('#sidebar .sidebar-section').forEach(section => {
+                    const title = section.querySelector(':scope > .sidebar-title');
+                    if (!title) return;
+
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'sidebar-title';
+                    button.id = `${section.id}Toggle`;
+                    button.textContent = title.textContent.trim();
+
+                    const panel = document.createElement('div');
+                    panel.className = 'sidebar-panel';
+                    panel.id = `${section.id}Panel`;
+                    while (title.nextSibling) panel.appendChild(title.nextSibling);
+                    title.replaceWith(button);
+                    section.appendChild(panel);
+
+                    button.setAttribute('aria-controls', panel.id);
+                    const expanded = typeof savedState[section.id] === 'boolean'
+                        ? savedState[section.id]
+                        : defaultExpanded.has(section.id);
+                    this.setSidebarSectionExpanded(section, expanded, { persist: false });
+                    button.addEventListener('click', () => {
+                        this.setSidebarSectionExpanded(
+                            section,
+                            button.getAttribute('aria-expanded') !== 'true'
+                        );
+                    });
+                });
+            }
+
+            setSidebarSectionExpanded(sectionOrId, expanded, { persist = true } = {}) {
+                const section = typeof sectionOrId === 'string'
+                    ? document.getElementById(sectionOrId)
+                    : sectionOrId;
+                const button = section?.querySelector(':scope > .sidebar-title');
+                const panel = section?.querySelector(':scope > .sidebar-panel');
+                if (!section || !button || !panel) return;
+
+                button.setAttribute('aria-expanded', String(expanded));
+                panel.hidden = !expanded;
+                section.classList.toggle('collapsed', !expanded);
+
+                if (persist) {
+                    const state = {};
+                    document.querySelectorAll('#sidebar .sidebar-section').forEach(candidate => {
+                        const toggle = candidate.querySelector(':scope > .sidebar-title');
+                        if (toggle) state[candidate.id] = toggle.getAttribute('aria-expanded') === 'true';
+                    });
+                    try {
+                        localStorage.setItem(SIDEBAR_STATE_KEY, JSON.stringify(state));
+                    } catch {}
+                }
             }
 
             beginOperation(kind) {
@@ -2923,6 +2994,10 @@
 
                 const cropOverlay = document.getElementById('cropOverlay');
                 if (tool === 'crop' || tool === 'redact') {
+                    this.setSidebarSectionExpanded(
+                        tool === 'crop' ? 'cropSection' : 'redactSection',
+                        true
+                    );
                     cropOverlay.classList.add('active');
                     this.cropRect = { x: 0, y: 0, w: this.originalWidth || 100, h: this.originalHeight || 100 };
                     this.updateCropBox();

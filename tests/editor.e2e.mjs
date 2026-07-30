@@ -76,6 +76,13 @@ async function readRecoveryRecord(page) {
     .sort((a, b) => (b?.savedAt || 0) - (a?.savedAt || 0))[0];
 }
 
+async function expandSidebarSection(page, sectionId) {
+  const toggle = page.locator(`#${sectionId}Toggle`);
+  if (await toggle.getAttribute('aria-expanded') !== 'true') {
+    await toggle.click();
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   const errors = [];
   pageRuntimeErrors.set(page, errors);
@@ -162,6 +169,31 @@ test('diagnostics copy capability state and sanitized errors without media ident
   expect(report).not.toContain('patient-secret.png');
   expect(report).not.toContain('private-source.gif');
   expect(report).not.toContain(BASIC_GIF.toString('base64'));
+});
+
+test('sidebar sections expose persistent keyboard-operated disclosure state', async ({ page }) => {
+  const diagnosticsToggle = page.getByRole('button', { name: 'Diagnostics', exact: true });
+  await expect(diagnosticsToggle).toHaveAttribute('aria-controls', 'diagnosticsSectionPanel');
+  await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'true');
+  await diagnosticsToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#diagnosticsSectionPanel')).toBeHidden();
+
+  await page.locator('#fileInput').setInputFiles(gifFile('accordion.gif'));
+  const exportToggle = page.getByRole('button', { name: 'Export Settings' });
+  await expect(exportToggle).toBeVisible();
+  await expect(exportToggle).toHaveAttribute('aria-expanded', 'true');
+  await exportToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(exportToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#exportSectionPanel')).toBeHidden();
+  await expect(page.locator('#exportBtn')).toBeVisible();
+  await expect(page.locator('#exportBtn')).toBeEnabled();
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Diagnostics', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#exportSectionToggle')).toHaveAttribute('aria-expanded', 'false');
 });
 
 test('failed replacement import preserves the active project', async ({ page }) => {
@@ -281,6 +313,7 @@ test('history shares unchanged canvases and recovery encodes only dirty frames',
     window.__pngSerializations = 0;
     editor.maxUndoBytes = 500;
   });
+  await expandSidebarSection(page, 'timingSection');
   await page.locator('#frameDelay').fill('12');
   await page.locator('#applyDelayAll').click();
   await expect.poll(async () => (await readRecoveryRecord(page))?.frames[0].delay).toBe(120);
@@ -476,6 +509,7 @@ test('full-frame GIF baseline preserves pixels, timing, size, and decoder compat
 
 test('GIF export rounds millisecond delays to centiseconds deterministically', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile());
+  await expandSidebarSection(page, 'timingSection');
   await page.locator('#exportFormat').selectOption('apng');
   await page.locator('#frameDelay').fill('15');
   await page.locator('#applyDelayAll').click();
@@ -735,6 +769,8 @@ test('cancelling export ignores late work and restores editor controls', async (
 
 test('autosave recovery restores frame state after reload', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('recovery.gif'));
+  await expandSidebarSection(page, 'timingSection');
+  await expandSidebarSection(page, 'speedSection');
   await page.locator('#exportFormat').selectOption('apng');
   await page.locator('#frameDelay').fill('110');
   await page.locator('#applyDelayAll').click();
@@ -767,6 +803,7 @@ test('autosave recovery restores frame state after reload', async ({ page }) => 
 
 test('recovery ownership isolates tabs and reclaims an abandoned lease', async ({ page, context }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('first-tab.gif'));
+  await expandSidebarSection(page, 'timingSection');
   await page.locator('#frameDelay').fill('11');
   await page.locator('#applyDelayAll').click();
   await page.waitForTimeout(2_500);
@@ -777,6 +814,7 @@ test('recovery ownership isolates tabs and reclaims an abandoned lease', async (
     'Another GifStudio tab has an active recovery'
   );
   await secondPage.locator('#fileInput').setInputFiles(gifFile('second-tab.gif'));
+  await expandSidebarSection(secondPage, 'timingSection');
   await secondPage.locator('#frameDelay').fill('23');
   await secondPage.locator('#applyDelayAll').click();
   await secondPage.waitForTimeout(2_500);
@@ -981,7 +1019,7 @@ test('mobile drawer reports state, restores focus, and fits 390px', async ({ pag
   await expect(menu).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#sidebar')).toHaveClass(/open/);
   await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toMatch(
-    /^(requestPersistenceBtn|copyDiagnosticsBtn)$/
+    /^(diagnosticsSectionToggle|gifInfoSectionToggle)$/
   );
 
   await page.keyboard.press('Escape');

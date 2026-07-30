@@ -292,18 +292,62 @@
         }
 
         .sidebar-section {
-            padding: 16px;
             border-bottom: 1px solid var(--border-subtle);
         }
 
         .sidebar-title {
+            appearance: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            min-height: 44px;
+            padding: 12px 16px;
+            background: transparent;
+            border: 0;
+            border-radius: 0;
             font-size: 11px;
             font-weight: 600;
+            text-align: left;
             text-transform: uppercase;
             font-family: var(--font-mono);
             letter-spacing: 1.25px;
             color: var(--text-secondary);
-            margin-bottom: 12px;
+            cursor: pointer;
+        }
+
+        .sidebar-title::after {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: rotate(45deg);
+            transition: transform var(--transition-fast);
+        }
+
+        .sidebar-title[aria-expanded="true"]::after {
+            transform: rotate(225deg);
+        }
+
+        .sidebar-title:hover {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+
+        .sidebar-title:focus-visible {
+            position: relative;
+            z-index: 1;
+            outline: 2px solid var(--accent-primary);
+            outline-offset: -3px;
+        }
+
+        .sidebar-panel {
+            padding: 0 16px 16px;
+        }
+
+        .sidebar-panel[hidden] {
+            display: none;
         }
 
         /* Tool Panels */

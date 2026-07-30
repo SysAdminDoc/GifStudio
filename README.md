@@ -50,7 +50,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Local Diagnostics** — Copy app/capability/fallback, memory, export-profile, and sanitized error text without frames, filenames, URLs, user-agent data, or telemetry
 
 ### Accessibility & Mobile
-- **ARIA Support** — Screen reader roles on canvas, timeline, modal, toast, and sidebar; hidden import controls become inert while a project is loaded
+- **ARIA Support** — Screen reader roles on canvas, timeline, modal, toast, and sidebar; keyboard-operated edit sections persist their open state, and hidden import controls become inert while a project is loaded
 - **Keyboard Navigation** — Focus-visible outlines, proper label associations, Escape to close modals
 - **Reduced Motion** — Respects `prefers-reduced-motion` for UI animations
 - **Mobile Drawer** — Sidebar slides out on small screens via hamburger toggle
