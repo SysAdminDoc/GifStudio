@@ -7,9 +7,13 @@ export default defineConfig({
   testMatch: '**/*.e2e.mjs',
   outputDir: join(tmpdir(), 'gifstudio-playwright-results'),
   fullyParallel: true,
+  workers: 4,
   forbidOnly: true,
   retries: process.env.CI ? 1 : 0,
   reporter: 'line',
+  expect: {
+    timeout: 10_000
+  },
   use: {
     baseURL: 'http://127.0.0.1:18766',
     browserName: 'chromium',

@@ -3,7 +3,9 @@
             maxWidth: 8192,
             maxHeight: 8192,
             maxFrames: 500,
-            maxDecodedBytes: 256 * 1024 * 1024
+            maxDecodedBytes: 256 * 1024 * 1024,
+            maxInputBytes: 128 * 1024 * 1024,
+            maxSubBlockBytes: 128 * 1024 * 1024
         });
 
         function invalidGif(message) {
@@ -74,7 +76,7 @@
             }
         }
 
-        function readSubBlocks(st) {
+        function readSubBlocks(st, maxBytes = DEFAULT_LIMITS.maxSubBlockBytes) {
             const blocks = [];
             let totalLen = 0;
             while (true) {
@@ -83,6 +85,9 @@
                 const block = st.readBytes(size, 'sub-block payload');
                 blocks.push(block);
                 totalLen += block.length;
+                if (totalLen > maxBytes) {
+                    throw invalidGif(`sub-block data exceeds the ${maxBytes} byte maximum`);
+                }
             }
             const out = new Uint8Array(totalLen);
             let off = 0;
@@ -197,6 +202,13 @@
         }
 
         function parseGIF(buffer, limitOverrides = {}) {
+            const limits = { ...DEFAULT_LIMITS, ...limitOverrides };
+            if (!buffer || !Number.isInteger(buffer.byteLength)) {
+                throw invalidGif('input must be binary data');
+            }
+            if (buffer.byteLength > limits.maxInputBytes) {
+                throw invalidGif(`input is ${buffer.byteLength} bytes; maximum is ${limits.maxInputBytes} bytes`);
+            }
             const st = new Stream(buffer);
             const header = st.readString(6, 'header');
             if (header !== 'GIF89a' && header !== 'GIF87a') throw new Error('Not a GIF file');
@@ -251,7 +263,7 @@
                         };
                     } else {
                         // Skip other extensions
-                        readSubBlocks(st);
+                        readSubBlocks(st, limits.maxSubBlockBytes);
                     }
                 } else if (block === 0x2C) { // image descriptor
                     const left = st.readUint16('frame left offset');
@@ -286,7 +298,7 @@
                     if (minCodeSize < 2 || minCodeSize > 8) {
                         throw invalidGif(`LZW minimum code size ${minCodeSize} is outside 2–8`);
                     }
-                    const imageData = readSubBlocks(st);
+                    const imageData = readSubBlocks(st, limits.maxSubBlockBytes);
                     if (imageData.length === 0) throw invalidGif(`frame ${frames.length + 1} has no image data`);
 
                     frames.push({

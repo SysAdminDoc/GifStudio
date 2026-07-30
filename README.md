@@ -63,7 +63,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Processing and privacy | Frames, recovery data, and exports stay in the browser. GifStudio has no backend or telemetry. |
 | Core GIF editing | Works from a local `index.html`. APNG export, optimization, installability, updates, and complete offline use require the repository/hosted app so the vendored assets and service worker are present. |
 | Offline behavior | After one successful HTTP(S) load, the service worker caches `index.html`, the manifest, icon, and all optional codecs. A local `file://` page cannot register that service worker. |
-| Decoder fallback | `ImageDecoder` is preferred when the browser exposes it; malformed/unsupported native decodes fall back to the strict JavaScript parser. Both paths enforce 8192×8192, 500-frame, and 256 MiB decoded-frame limits. |
+| Decoder fallback | `ImageDecoder` is preferred when the browser exposes it; malformed/unsupported native decodes fall back to the strict JavaScript parser. Both paths enforce 8192×8192, 500-frame, and 256 MiB decoded-frame limits; the parser additionally caps input and accumulated sub-block data at 128 MiB. |
 | Memory guard | Import, restore, edits, autosave, and export estimate unique resident canvases and temporary RGBA buffers before allocation. Undo/redo shares unchanged canvases and is capped at one quarter of the device-aware budget. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
 | Timing | GIF controls and output use centiseconds; values are rounded deterministically to 10 ms units. APNG controls and output use milliseconds. Source, edited, and encoded durations are shown separately. |
 | Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
@@ -100,7 +100,7 @@ JavaScript source is maintained in three boundaries:
 
 `src/index.template.html` owns the document/CSS shell. `npm run build:artifact` normalizes line endings and embeds those boundaries to generate the zero-install `index.html`; do not hand-edit the generated scripts. `npm run check:artifact` fails on any byte drift, and `.gitattributes` pins text files to LF so a clean checkout reproduces the same artifact across platforms.
 
-`npm test` first checks artifact reproducibility, then runs strict parser fixtures directly against `src/gif-decoder.js` and Playwright against the shipped `index.html`. The static release check parses both source and embedded scripts and also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
+`npm test` first checks artifact reproducibility, then runs deterministic parser fixtures, truncation sweeps, and bounded byte mutations directly against `src/gif-decoder.js` before Playwright exercises the shipped `index.html`. The static release check parses both source and embedded scripts and also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
 
 ## License
 

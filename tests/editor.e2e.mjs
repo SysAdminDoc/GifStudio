@@ -123,6 +123,7 @@ test('loaded projects remove the import surface from focus and accessibility nav
 
 test('diagnostics copy capability state and sanitized errors without media identifiers', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('private-source.gif'));
+  await expect(page.locator('#totalFrames')).toHaveText('1');
   await page.locator('#fileInput').setInputFiles({
     name: 'patient-secret.png',
     mimeType: 'image/png',
@@ -719,9 +720,12 @@ test('recovery ownership isolates tabs and reclaims an abandoned lease', async (
   await reclaimPage.getByRole('button', { name: 'Restore' }).click();
   await expect(reclaimPage.locator('#currentDelay')).toHaveText('230');
   await expect.poll(async () => (await readRecoveryEntries(reclaimPage)).length).toBe(1);
+  await expect.poll(async () => {
+    const [entry] = await readRecoveryEntries(reclaimPage);
+    return entry.record.leaseExpiresAt - Date.now();
+  }).toBeGreaterThan(10_000);
   const reclaimed = await readRecoveryEntries(reclaimPage);
   expect(reclaimed[0].record.frames[0].delay).toBe(230);
-  expect(reclaimed[0].record.leaseExpiresAt).toBeGreaterThan(Date.now());
   await reclaimPage.close();
 });
 

@@ -1965,9 +1965,8 @@
 
                 const selected = this.framesContainer.querySelector('.frame-item.selected');
                 if (selected) {
-                    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
                     selected.scrollIntoView({
-                        behavior: this.isPlaying || reducedMotion ? 'auto' : 'smooth',
+                        behavior: 'auto',
                         inline: 'center',
                         block: 'nearest'
                     });
