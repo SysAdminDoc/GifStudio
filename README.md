@@ -33,7 +33,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **APNG Export** — Millisecond timing, alpha support, and optional palette reduction through the bundled UPNG.js codec
 - **GIF Optimization** — Lossy LZW compression via gifsicle-wasm (O1/O2/O3 levels)
 - **Split Frames** — Export all frames as numbered PNGs in a ZIP archive
-- **File Size Estimation** — Live estimated size with Discord, Slack, and Twitter limit badges
+- **Purpose-specific fit guidance** — Estimates and final bytes are checked against source-dated Discord message/emoji and X web/mobile GIF limits
 - **Custom Filename** — Defaults to original filename + "-edited"
 - **Direct Save** — File System Access API for save-to-disk on Chromium; standard download elsewhere
 - **Share** — Web Share API button for one-tap sharing on supported devices
@@ -67,6 +67,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Memory guard | Import, restore, edits, autosave, and export estimate unique resident canvases and temporary RGBA buffers before allocation. Undo/redo shares unchanged canvases and is capped at one quarter of the device-aware budget. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
 | Timing | GIF controls and output use centiseconds; values are rounded deterministically to 10 ms units. APNG controls and output use milliseconds. Source, edited, and encoded durations are shown separately. |
 | Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
+| Platform fit | Estimated and final encoded bytes are compared with purpose-specific limits reviewed on 2026-07-29: [Discord uploads](https://docs.discord.com/developers/reference#uploading-files), [Discord emoji](https://docs.discord.com/developers/resources/emoji#create-guild-emoji), and [X web/mobile GIFs](https://help.x.com/en/using-x/posting-gifs-and-pictures#size-and-file-type-requirements). Limits can change; verify the destination policy before posting. |
 | Split-frame ZIP | PNG splitting uses the shared progress/cancel flow, checks serialization and CRCs, and stops before allocation above 500 entries or a 512 MiB estimated/actual ZIP. Output basenames are normalized for cross-platform filesystems. |
 | Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
 | Recovery | Versioned IndexedDB sessions are isolated per browser tab and retained for up to seven days or until dismissed. Autosave reuses cached PNG data for unchanged canvases, superseded saves are aborted, stale tabs cannot delete active records, abandoned sessions can be reclaimed, and storage failures advise exporting before leaving the tab. |

@@ -1029,11 +1029,32 @@
 
         .platform-badges {
             display: flex;
+            flex-wrap: wrap;
             gap: 8px;
             margin-top: 6px;
             font-size: 10px;
             font-family: var(--font-mono);
             letter-spacing: 0.2px;
+        }
+
+        .platform-fit {
+            flex: 1 1 calc(50% - 8px);
+            line-height: 1.35;
+        }
+
+        .platform-fit.fits {
+            color: var(--success);
+        }
+
+        .platform-fit.over {
+            color: var(--danger);
+        }
+
+        .platform-review {
+            margin-top: 7px;
+            color: var(--text-muted);
+            font-size: 9px;
+            line-height: 1.35;
         }
 
         /* Responsive */
@@ -1480,9 +1501,10 @@
                             Loop forever
                         </label>
                         <div class="info-item" style="margin-top: 8px;">
-                            <div class="info-label">Estimated Size</div>
+                            <div class="info-label">Export size</div>
                             <div class="info-value" id="sizeEstimate">-</div>
                             <div id="platformBadges" class="platform-badges"></div>
+                            <div class="platform-review">Limits reviewed 2026-07-29 · Verify policy before posting</div>
                         </div>
                         <button class="btn btn-secondary" id="splitFramesBtn" style="width: 100%; margin-top: 8px;">
                             Split Frames to PNGs
@@ -2383,6 +2405,7 @@
                 this._recoveryOwnerEpoch = 0;
                 this._recoveryChannel = null;
                 this._recoveryLeaseTimer = null;
+                this._runtimeDisposed = false;
                 this._recoveryConflictShown = false;
                 this._recoveryPngCache = new WeakMap();
                 this._canvasRefCounts = new WeakMap();
@@ -2747,10 +2770,28 @@
                     () => this.refreshRecoveryLease(),
                     RECOVERY_HEARTBEAT_MS
                 );
-                window.addEventListener('pagehide', () => {
-                    if (this._recoveryLeaseTimer) clearInterval(this._recoveryLeaseTimer);
-                    this._recoveryChannel?.close();
+                window.addEventListener('pagehide', event => {
+                    if (!event.persisted) this.disposeRuntime();
                 }, { once: true });
+            }
+
+            disposeRuntime() {
+                if (this._runtimeDisposed) return;
+                this._runtimeDisposed = true;
+                if (this._recoveryLeaseTimer) clearInterval(this._recoveryLeaseTimer);
+                this._recoveryLeaseTimer = null;
+                this._recoveryChannel?.close();
+                this._recoveryChannel = null;
+                if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+                this._autosaveTimer = null;
+                this._autosaveGeneration++;
+                try { this._autosaveTransaction?.abort(); } catch {}
+                this._autosaveTransaction = null;
+                if (this.playInterval) clearTimeout(this.playInterval);
+                this.playInterval = null;
+                this.isPlaying = false;
+                if (this._activeOperation) this._activeOperation.cancelled = true;
+                if (this._activeExportJob) this._activeExportJob.cancelled = true;
             }
 
             broadcastRecoveryClaim() {
@@ -5401,6 +5442,7 @@
 
             recordOutputValidation(validation) {
                 this.lastOutputValidation = validation;
+                this.updateSizeEstimate(validation.bytes);
                 this.updateAnalyzer();
             }
 
@@ -6253,10 +6295,64 @@
                 }
             }
 
-            updateSizeEstimate() {
+            getPlatformFitProfiles() {
+                return [
+                    {
+                        name: 'Discord message',
+                        maxBytes: 10 * 1024 * 1024,
+                        limitLabel: '10 MiB',
+                        source: 'Discord API default file upload limit'
+                    },
+                    {
+                        name: 'Discord emoji',
+                        maxBytes: 256 * 1024,
+                        limitLabel: '256 KiB',
+                        source: 'Discord Emoji Resource'
+                    },
+                    {
+                        name: 'X web GIF',
+                        maxBytes: 15 * 1000 * 1000,
+                        limitLabel: '15 MB',
+                        source: 'X Help GIF upload requirements'
+                    },
+                    {
+                        name: 'X mobile GIF',
+                        maxBytes: 5 * 1000 * 1000,
+                        limitLabel: '5 MB',
+                        source: 'X Help GIF upload requirements'
+                    }
+                ];
+            }
+
+            evaluatePlatformFit(bytes) {
+                return this.getPlatformFitProfiles().map(profile => ({
+                    ...profile,
+                    fits: bytes <= profile.maxBytes
+                }));
+            }
+
+            renderPlatformFit(bytes, isFinal = false) {
                 const el = document.getElementById('sizeEstimate');
                 const badges = document.getElementById('platformBadges');
-                if (!el || this.frames.length === 0) return;
+                if (!el || !badges) return;
+                const outputDuration = this.getTimingModel().outputDuration;
+                el.textContent = `${isFinal ? 'Final' : 'Estimated'} ${isFinal ? '' : '~'}${this.formatBytes(bytes)} · ` +
+                    `${this.formatDuration(outputDuration)}`;
+                badges.replaceChildren();
+                this.evaluatePlatformFit(bytes).forEach(profile => {
+                    const badge = document.createElement('span');
+                    badge.className = `platform-fit ${profile.fits ? 'fits' : 'over'}`;
+                    badge.dataset.destination = profile.name;
+                    badge.dataset.fits = String(profile.fits);
+                    badge.title = `${profile.source}; reviewed 2026-07-29`;
+                    badge.textContent =
+                        `${profile.fits ? '✓' : '✗'} ${profile.name} (${profile.limitLabel})`;
+                    badges.appendChild(badge);
+                });
+            }
+
+            updateSizeEstimate(actualBytes = null) {
+                if (this.frames.length === 0) return;
 
                 const pixels = this.originalWidth * this.originalHeight;
                 const quality = parseInt(document.getElementById('qualitySlider').value) || 10;
@@ -6267,19 +6363,7 @@
                 const overhead = 800 + this.frames.length * (20 + colorCount * 3);
                 const estimated = Math.round(overhead + bytesPerFrame * this.frames.length);
 
-                const outputDuration = this.getTimingModel().outputDuration;
-                el.textContent = `~${this.formatBytes(estimated)} · ${this.formatDuration(outputDuration)}`;
-
-                const limits = [
-                    { name: 'Discord', max: 8 * 1024 * 1024 },
-                    { name: 'Slack', max: 8 * 1024 * 1024 },
-                    { name: 'Twitter', max: 15 * 1024 * 1024 }
-                ];
-                badges.innerHTML = limits.map(l => {
-                    const ok = estimated <= l.max;
-                    const color = ok ? 'var(--success)' : 'var(--danger)';
-                    return `<span style="color:${color}">${ok ? '✓' : '✗'} ${l.name}</span>`;
-                }).join('  ');
+                this.renderPlatformFit(actualBytes ?? estimated, actualBytes !== null);
             }
 
             formatBytes(bytes) {

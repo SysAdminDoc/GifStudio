@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 const BASIC_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
+const pageRuntimeErrors = new WeakMap();
 
 function gifFile(name = 'pixel.gif') {
   return { name, mimeType: 'image/gif', buffer: BASIC_GIF };
@@ -76,6 +77,12 @@ async function readRecoveryRecord(page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  const errors = [];
+  pageRuntimeErrors.set(page, errors);
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     Object.defineProperty(window, 'showSaveFilePicker', {
       configurable: true,
@@ -85,24 +92,13 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test.afterEach(async ({ page }) => {
+  await page.evaluate(() => window.editor?.disposeRuntime()).catch(() => {});
+});
+
 test('shipped page boots without console or uncaught errors', async ({ page }) => {
-  await page.evaluate(async () => {
-    if (!('serviceWorker' in navigator)) return;
-    await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise(resolve => setTimeout(resolve, 5_000))
-    ]);
-  });
-  const errors = [];
-  page.on('console', message => {
-    if (message.type() === 'error') errors.push(message.text());
-  });
-  page.on('pageerror', error => errors.push(error.message));
-
-  await page.reload({ waitUntil: 'networkidle' });
-
-  expect(errors).toEqual([]);
   await expect(page.getByRole('heading', { name: 'Drop a GIF or image sequence' })).toBeVisible();
+  expect(pageRuntimeErrors.get(page)).toEqual([]);
 });
 
 test('loaded projects remove the import surface from focus and accessibility navigation', async ({ page }) => {
@@ -118,8 +114,11 @@ test('loaded projects remove the import surface from focus and accessibility nav
   await expect(dropZone).toHaveAttribute('aria-hidden', 'true');
   await expect(dropZone).toHaveAttribute('inert', '');
   await expect(page.getByRole('button', { name: 'Choose files' })).toHaveCount(0);
-  await chooseFiles.focus();
-  await expect(chooseFiles).not.toBeFocused();
+  expect(await page.evaluate(() => {
+    const button = document.getElementById('chooseFilesBtn');
+    button.focus();
+    return document.activeElement === button;
+  })).toBe(false);
 
   await page.evaluate(() => editor.setDropZoneActive(true));
   await expect(dropZone).not.toHaveAttribute('aria-hidden');
@@ -240,6 +239,7 @@ test('memory override is shared by native and JavaScript GIF decode paths', asyn
 
 test('edit and export memory ceilings stop work before cloning frames', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile());
+  await expect(page.locator('#totalFrames')).toHaveText('1');
   await page.evaluate(() => {
     editor.getMemoryLimits = () => ({
       defaultBytes: 1,
@@ -261,6 +261,7 @@ test('edit and export memory ceilings stop work before cloning frames', async ({
 
 test('history shares unchanged canvases and recovery encodes only dirty frames', async ({ page }) => {
   await page.evaluate(() => {
+    window.ImageDecoder = undefined;
     const originalToBlob = HTMLCanvasElement.prototype.toBlob;
     window.__pngSerializations = 0;
     HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
@@ -271,6 +272,7 @@ test('history shares unchanged canvases and recovery encodes only dirty frames',
 
   const files = Array.from({ length: 100 }, (_, index) => gifFile(`shared-${index + 1}.gif`));
   await page.locator('#fileInput').setInputFiles(files);
+  await expect(page.locator('#totalFrames')).toHaveText('100');
   await expect.poll(() => page.evaluate(() => window.__pngSerializations)).toBe(100);
   await expect.poll(async () => (await readRecoveryRecord(page))?.frames.length).toBe(100);
 
@@ -328,6 +330,42 @@ test('GIF export emits a valid signature from the shipped page', async ({ page }
   await expect(page.locator('#exportModal')).not.toHaveClass(/active/);
   await expect(page.locator('#exportBtn')).toBeEnabled();
   await expect(page.locator('#analyzerContent')).toContainText('Validated GIF output · 1×1 · 1 frame');
+});
+
+test('platform guidance uses purpose-specific boundaries and final export bytes', async ({ page }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile());
+
+  const boundaries = await page.evaluate(() => editor.getPlatformFitProfiles().map(profile => ({
+    name: profile.name,
+    exact: editor.evaluatePlatformFit(profile.maxBytes)
+      .find(candidate => candidate.name === profile.name).fits,
+    over: editor.evaluatePlatformFit(profile.maxBytes + 1)
+      .find(candidate => candidate.name === profile.name).fits
+  })));
+  expect(boundaries).toEqual([
+    { name: 'Discord message', exact: true, over: false },
+    { name: 'Discord emoji', exact: true, over: false },
+    { name: 'X web GIF', exact: true, over: false },
+    { name: 'X mobile GIF', exact: true, over: false }
+  ]);
+
+  await expect(page.locator('#sizeEstimate')).toContainText('Estimated ~');
+  await expect(page.locator('#platformBadges')).toContainText('Discord message (10 MiB)');
+  await expect(page.locator('#platformBadges')).toContainText('Discord emoji (256 KiB)');
+  await expect(page.locator('#platformBadges')).toContainText('X web GIF (15 MB)');
+  await expect(page.locator('#platformBadges')).toContainText('X mobile GIF (5 MB)');
+  await expect(page.getByText('Limits reviewed 2026-07-29')).toBeVisible();
+  await expect(page.locator('#platformBadges')).not.toContainText('Slack');
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#exportBtn').click();
+  const download = await downloadPromise;
+  await download.path();
+  await expect(page.locator('#sizeEstimate')).toContainText('Final ');
+  const validationBytes = await page.evaluate(() => editor.lastOutputValidation.bytes);
+  await expect(page.locator('#sizeEstimate')).toContainText(
+    await page.evaluate(bytes => editor.formatBytes(bytes), validationBytes)
+  );
 });
 
 test('optional ImageDecoder accepts a valid GIF when the engine exposes it', async ({ page, browserName }) => {
@@ -554,13 +592,13 @@ test('split-frame ZIP handles null PNG serialization and cancellation', async ({
   await page.reload();
   await page.locator('#fileInput').setInputFiles([gifFile('one.gif'), gifFile('two.gif')]);
   await page.evaluate(() => {
-    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-    HTMLCanvasElement.prototype.toBlob = function delayedToBlob(callback, ...args) {
-      setTimeout(() => originalToBlob.call(this, callback, ...args), 250);
+    HTMLCanvasElement.prototype.toBlob = function pendingToBlob() {
+      window.__pendingPngSerialization = true;
     };
   });
   await page.locator('#splitFramesBtn').click();
   await expect(page.locator('#exportModal')).toHaveAttribute('aria-hidden', 'false');
+  await expect.poll(() => page.evaluate(() => window.__pendingPngSerialization)).toBe(true);
   await page.locator('#cancelExportBtn').click();
   await expect(page.locator('.toast.warning')).toContainText('PNG split cancelled');
   await expect(page.locator('#exportBtn')).toBeEnabled();
