@@ -18,7 +18,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Frame Inspector** — View decoded dimensions/timing for every source, raw block details when the JS GIF parser is used, memory estimates, and validated output summaries
 
 ### Edit
-- **Frame Editor** — Add, remove, reorder, duplicate, and reverse frames with undo/redo (30 levels)
+- **Frame Editor** — Add, remove, reorder, duplicate, and reverse frames with copy-on-write, byte-budgeted undo/redo
 - **Multi-Select** — Shift+click for range selection, Ctrl/Cmd+click to toggle individual frames
 - **Timing Control** — Edit GIF delays in centiseconds or APNG delays in milliseconds, with encoded duration and FPS diagnostics
 - **Playback Modes** — Normal, Ping-pong, and Boomerang playback
@@ -64,12 +64,12 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Core GIF editing | Works from a local `index.html`. APNG export, optimization, installability, updates, and complete offline use require the repository/hosted app so the vendored assets and service worker are present. |
 | Offline behavior | After one successful HTTP(S) load, the service worker caches `index.html`, the manifest, icon, and all optional codecs. A local `file://` page cannot register that service worker. |
 | Decoder fallback | `ImageDecoder` is preferred when the browser exposes it; malformed/unsupported native decodes fall back to the strict JavaScript parser. Both paths enforce 8192×8192, 500-frame, and 256 MiB decoded-frame limits. |
-| Memory guard | Import, restore, edits, autosave, and export estimate resident and temporary RGBA buffers before allocation. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
+| Memory guard | Import, restore, edits, autosave, and export estimate unique resident canvases and temporary RGBA buffers before allocation. Undo/redo shares unchanged canvases and is capped at one quarter of the device-aware budget. The default peak budget is 256 MiB on devices reporting ≤2 GiB, 384 MiB at ≤4 GiB, and 512 MiB otherwise. A deliberate one-operation override is offered only below the device-aware ceiling, never above 1 GiB. |
 | Timing | GIF controls and output use centiseconds; values are rounded deterministically to 10 ms units. APNG controls and output use milliseconds. Source, edited, and encoded durations are shown separately. |
 | Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
 | Split-frame ZIP | PNG splitting uses the shared progress/cancel flow, checks serialization and CRCs, and stops before allocation above 500 entries or a 512 MiB estimated/actual ZIP. Output basenames are normalized for cross-platform filesystems. |
 | Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
-| Recovery | Versioned IndexedDB sessions are isolated per browser tab and retained for up to seven days or until dismissed. Superseded saves are aborted, stale tabs cannot delete active records, abandoned sessions can be reclaimed, and storage failures advise exporting before leaving the tab. |
+| Recovery | Versioned IndexedDB sessions are isolated per browser tab and retained for up to seven days or until dismissed. Autosave reuses cached PNG data for unchanged canvases, superseded saves are aborted, stale tabs cannot delete active records, abandoned sessions can be reclaimed, and storage failures advise exporting before leaving the tab. |
 | Diagnostics | The sidebar report identifies decoder/save/share/clipboard/service-worker/storage/codec fallbacks and the last sanitized error. It contains project dimensions/count but excludes media, filenames, URLs, user-agent data, and telemetry. |
 
 GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 changed-region encoder was superseded by gifenc in v0.4.0 because safe local-frame encoding needs look-ahead disposal handling for opaque-to-transparent transitions. The bundled optimizer remains the supported size-reduction path.

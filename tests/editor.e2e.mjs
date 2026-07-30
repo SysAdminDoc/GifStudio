@@ -229,7 +229,7 @@ test('edit and export memory ceilings stop work before cloning frames', async ({
     });
   });
 
-  await page.locator('#duplicateFrame').click();
+  await page.evaluate(() => editor.duplicateFrame());
   await expect(page.locator('.toast.error')).toContainText('Duplicate frame stopped before allocation');
   await expect(page.locator('#totalFrames')).toHaveText('1');
 
@@ -238,6 +238,61 @@ test('edit and export memory ceilings stop work before cloning frames', async ({
   await page.locator('#exportBtn').click();
   await expect(page.locator('.toast.error').last()).toContainText('Could not start export: GIF export stopped before allocation');
   expect(downloads).toBe(0);
+});
+
+test('history shares unchanged canvases and recovery encodes only dirty frames', async ({ page }) => {
+  await page.evaluate(() => {
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    window.__pngSerializations = 0;
+    HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
+      if (!type || type === 'image/png') window.__pngSerializations++;
+      return originalToBlob.call(this, callback, type, quality);
+    };
+  });
+
+  const files = Array.from({ length: 100 }, (_, index) => gifFile(`shared-${index + 1}.gif`));
+  await page.locator('#fileInput').setInputFiles(files);
+  await expect.poll(() => page.evaluate(() => window.__pngSerializations)).toBe(100);
+  await expect.poll(async () => (await readRecoveryRecord(page))?.frames.length).toBe(100);
+
+  await page.evaluate(() => {
+    window.__baselineCanvases = editor.frames.map(frame => frame.canvas);
+    window.__pngSerializations = 0;
+    editor.maxUndoBytes = 500;
+  });
+  await page.locator('#frameDelay').fill('12');
+  await page.locator('#applyDelayAll').click();
+  await expect.poll(async () => (await readRecoveryRecord(page))?.frames[0].delay).toBe(120);
+  expect(await page.evaluate(() => window.__pngSerializations)).toBe(0);
+  expect(await page.evaluate(() =>
+    editor.frames.every((frame, index) =>
+      frame.canvas === window.__baselineCanvases[index] &&
+      editor.undoStack[0].frames[index].canvas === frame.canvas
+    )
+  )).toBe(true);
+
+  await page.evaluate(() => editor.duplicateFrame());
+  await expect.poll(async () => (await readRecoveryRecord(page))?.frames.length).toBe(101);
+  expect(await page.evaluate(() => window.__pngSerializations)).toBe(1);
+
+  await page.evaluate(() => {
+    editor.flipHorizontal();
+    editor.flipHorizontal();
+  });
+  expect(await page.evaluate(() => ({
+    levels: editor.undoStack.length,
+    bytes: editor.estimateHistoryBytes(),
+    limit: editor.maxUndoBytes
+  }))).toEqual({ levels: 1, bytes: 404, limit: 500 });
+
+  await page.evaluate(() => editor.undo());
+  expect(await page.evaluate(() =>
+    editor.frames.every(frame => frame.canvas.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255)
+  )).toBe(true);
+  await page.evaluate(() => editor.redo());
+  expect(await page.evaluate(() =>
+    editor.frames.every(frame => frame.canvas.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255)
+  )).toBe(true);
 });
 
 test('GIF export emits a valid signature from the shipped page', async ({ page }) => {
@@ -665,7 +720,8 @@ test('recovery ownership isolates tabs and reclaims an abandoned lease', async (
   await expect(reclaimPage.locator('#currentDelay')).toHaveText('230');
   await expect.poll(async () => (await readRecoveryEntries(reclaimPage)).length).toBe(1);
   const reclaimed = await readRecoveryEntries(reclaimPage);
-  expect(reclaimed[0].record.ownerId).not.toBe(secondEntry.record.ownerId);
+  expect(reclaimed[0].record.frames[0].delay).toBe(230);
+  expect(reclaimed[0].record.leaseExpiresAt).toBeGreaterThan(Date.now());
   await reclaimPage.close();
 });
 

@@ -68,6 +68,8 @@
                 this._recoveryChannel = null;
                 this._recoveryLeaseTimer = null;
                 this._recoveryConflictShown = false;
+                this._recoveryPngCache = new WeakMap();
+                this._canvasRefCounts = new WeakMap();
                 this._scriptLoads = new Map();
                 this.serviceWorkerStatus = 'not-available';
                 this._modalReturnFocus = null;
@@ -101,7 +103,7 @@
                 // Undo/redo state
                 this.undoStack = [];
                 this.redoStack = [];
-                this.maxUndoLevels = 30;
+                this.maxUndoBytes = Math.floor(this.getMemoryLimits().defaultBytes / 4);
 
                 // Elements
                 this.canvas = document.getElementById('mainCanvas');
@@ -225,17 +227,15 @@
             }
 
             estimateResidentBytes() {
-                const framesBytes = frames => (frames || []).reduce(
-                    (sum, frame) => sum + frame.canvas.width * frame.canvas.height * 4,
+                const canvases = new Set();
+                const collect = frames => (frames || []).forEach(frame => canvases.add(frame.canvas));
+                collect(this.frames);
+                this.undoStack.forEach(snapshot => collect(snapshot.frames));
+                this.redoStack.forEach(snapshot => collect(snapshot.frames));
+                return [...canvases].reduce(
+                    (sum, canvas) => sum + canvas.width * canvas.height * 4,
                     0
                 );
-                const snapshotsBytes = stack => stack.reduce(
-                    (sum, snapshot) => sum + framesBytes(snapshot.frames),
-                    0
-                );
-                return framesBytes(this.frames) +
-                    snapshotsBytes(this.undoStack) +
-                    snapshotsBytes(this.redoStack);
             }
 
             estimateMemory(operation, {
@@ -328,6 +328,25 @@
             releaseFrames(frames) {
                 if (!frames) return;
                 frames.forEach(frame => this.releaseCanvas(frame.canvas));
+            }
+
+            retainCanvas(canvas) {
+                const owners = this._canvasRefCounts.get(canvas) || 1;
+                this._canvasRefCounts.set(canvas, owners + 1);
+                return canvas;
+            }
+
+            ensureWritableFrame(index) {
+                const frame = this.frames[index];
+                if (!frame || (this._canvasRefCounts.get(frame.canvas) || 1) <= 1) return frame;
+                const source = frame.canvas;
+                const canvas = document.createElement('canvas');
+                canvas.width = source.width;
+                canvas.height = source.height;
+                canvas.getContext('2d').drawImage(source, 0, 0);
+                this.releaseCanvas(source);
+                frame.canvas = canvas;
+                return frame;
             }
 
             commitProject(project, token) {
@@ -653,13 +672,11 @@
                     return;
                 }
                 const snapshot = {
-                    frames: this.frames.map(f => {
-                        const c = document.createElement('canvas');
-                        c.width = f.canvas.width;
-                        c.height = f.canvas.height;
-                        c.getContext('2d').drawImage(f.canvas, 0, 0);
-                        return { canvas: c, delay: f.delay, disposalType: f.disposalType };
-                    }),
+                    frames: this.frames.map(f => ({
+                        canvas: this.retainCanvas(f.canvas),
+                        delay: f.delay,
+                        disposalType: f.disposalType
+                    })),
                     width: this.originalWidth,
                     height: this.originalHeight,
                     filename: this.originalFilename,
@@ -678,13 +695,17 @@
                     ) return;
                     const frameData = [];
                     for (const frame of snapshot.frames) {
-                        const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
-                        if (!blob) throw new Error('Browser could not serialize a recovery frame');
-                        if (
-                            generation !== this._autosaveGeneration ||
-                            recoveryOwnerEpoch !== this._recoveryOwnerEpoch
-                        ) return;
-                        const buf = await blob.arrayBuffer();
+                        let buf = this._recoveryPngCache.get(frame.canvas);
+                        if (!buf) {
+                            const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
+                            if (!blob) throw new Error('Browser could not serialize a recovery frame');
+                            if (
+                                generation !== this._autosaveGeneration ||
+                                recoveryOwnerEpoch !== this._recoveryOwnerEpoch
+                            ) return;
+                            buf = await blob.arrayBuffer();
+                            this._recoveryPngCache.set(frame.canvas, buf);
+                        }
                         frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
                     }
                     if (
@@ -738,7 +759,7 @@
                 } finally {
                     if (this._autosaveTransaction === tx) this._autosaveTransaction = null;
                     if (db) db.close();
-                    snapshot.frames.forEach(f => this.releaseCanvas(f.canvas));
+                    this.releaseFrames(snapshot.frames);
                 }
             }
 
@@ -994,44 +1015,60 @@
             // Undo / Redo
             // ============================================
 
-            saveUndoState(label) {
-                const snapshot = {
+            captureHistorySnapshot(label) {
+                return {
                     label,
-                    frames: this.frames.map(f => {
-                        const c = document.createElement('canvas');
-                        c.width = f.canvas.width;
-                        c.height = f.canvas.height;
-                        c.getContext('2d').drawImage(f.canvas, 0, 0);
-                        return { canvas: c, delay: f.delay, disposalType: f.disposalType };
-                    }),
+                    frames: this.frames.map(frame => ({
+                        canvas: this.retainCanvas(frame.canvas),
+                        delay: frame.delay,
+                        disposalType: frame.disposalType
+                    })),
                     currentFrame: this.currentFrame,
                     originalWidth: this.originalWidth,
                     originalHeight: this.originalHeight,
                     cropRect: { ...this.cropRect }
                 };
-                this.undoStack.push(snapshot);
-                if (this.undoStack.length > this.maxUndoLevels) {
-                    const old = this.undoStack.shift();
-                    old.frames.forEach(f => this.releaseCanvas(f.canvas));
+            }
+
+            releaseHistorySnapshot(snapshot) {
+                this.releaseFrames(snapshot?.frames);
+            }
+
+            estimateHistoryBytes() {
+                const canvases = new Set();
+                [...this.undoStack, ...this.redoStack].forEach(snapshot => {
+                    snapshot.frames.forEach(frame => canvases.add(frame.canvas));
+                });
+                return [...canvases].reduce(
+                    (sum, canvas) => sum + canvas.width * canvas.height * 4,
+                    0
+                );
+            }
+
+            trimHistoryToBudget() {
+                while (this.estimateHistoryBytes() > this.maxUndoBytes) {
+                    const snapshot = this.undoStack.length > 1
+                        ? this.undoStack.shift()
+                        : this.redoStack.shift() || this.undoStack.shift();
+                    if (!snapshot) break;
+                    this.releaseHistorySnapshot(snapshot);
                 }
-                // Clear redo stack on new action
-                this.redoStack.forEach(s => s.frames.forEach(f => this.releaseCanvas(f.canvas)));
+            }
+
+            saveUndoState(label) {
+                this.undoStack.push(this.captureHistorySnapshot(label));
+                this.redoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
                 this.redoStack = [];
+                this.trimHistoryToBudget();
                 this.updateUndoRedoButtons();
                 this.scheduleAutosave();
             }
 
             restoreSnapshot(snapshot) {
-                // Release current frames
-                this.frames.forEach(f => this.releaseCanvas(f.canvas));
-                // Deep-copy the snapshot frames so the snapshot stays intact on its stack
-                this.frames = snapshot.frames.map(f => {
-                    const c = document.createElement('canvas');
-                    c.width = f.canvas.width;
-                    c.height = f.canvas.height;
-                    c.getContext('2d').drawImage(f.canvas, 0, 0);
-                    return { canvas: c, delay: f.delay, disposalType: f.disposalType };
-                });
+                this.releaseFrames(this.frames);
+                // The popped snapshot transfers its retained canvas ownership to
+                // the active project; metadata objects remain independently mutable.
+                this.frames = snapshot.frames.map(frame => ({ ...frame }));
                 this.currentFrame = Math.min(snapshot.currentFrame, this.frames.length - 1);
                 this.originalWidth = snapshot.originalWidth;
                 this.originalHeight = snapshot.originalHeight;
@@ -1047,25 +1084,11 @@
 
             undo() {
                 if (this.undoStack.length === 0) return;
-                if (!this.prepareMutation({ operation: 'Undo', temporaryCopies: 2 })) return;
-                // Save current state to redo stack
-                const currentState = {
-                    label: 'redo',
-                    frames: this.frames.map(f => {
-                        const c = document.createElement('canvas');
-                        c.width = f.canvas.width;
-                        c.height = f.canvas.height;
-                        c.getContext('2d').drawImage(f.canvas, 0, 0);
-                        return { canvas: c, delay: f.delay, disposalType: f.disposalType };
-                    }),
-                    currentFrame: this.currentFrame,
-                    originalWidth: this.originalWidth,
-                    originalHeight: this.originalHeight,
-                    cropRect: { ...this.cropRect }
-                };
-                this.redoStack.push(currentState);
+                if (!this.prepareMutation({ operation: 'Undo', temporaryCopies: 0 })) return;
+                this.redoStack.push(this.captureHistorySnapshot('redo'));
                 const snapshot = this.undoStack.pop();
                 this.restoreSnapshot(snapshot);
+                this.trimHistoryToBudget();
                 this.updateUndoRedoButtons();
                 this.scheduleAutosave();
                 this.showToast(`Undo: ${snapshot.label}`, 'info');
@@ -1073,25 +1096,11 @@
 
             redo() {
                 if (this.redoStack.length === 0) return;
-                if (!this.prepareMutation({ operation: 'Redo', temporaryCopies: 2 })) return;
-                // Save current state to undo stack
-                const currentState = {
-                    label: 'undo',
-                    frames: this.frames.map(f => {
-                        const c = document.createElement('canvas');
-                        c.width = f.canvas.width;
-                        c.height = f.canvas.height;
-                        c.getContext('2d').drawImage(f.canvas, 0, 0);
-                        return { canvas: c, delay: f.delay, disposalType: f.disposalType };
-                    }),
-                    currentFrame: this.currentFrame,
-                    originalWidth: this.originalWidth,
-                    originalHeight: this.originalHeight,
-                    cropRect: { ...this.cropRect }
-                };
-                this.undoStack.push(currentState);
+                if (!this.prepareMutation({ operation: 'Redo', temporaryCopies: 0 })) return;
+                this.undoStack.push(this.captureHistorySnapshot('undo'));
                 const snapshot = this.redoStack.pop();
                 this.restoreSnapshot(snapshot);
+                this.trimHistoryToBudget();
                 this.updateUndoRedoButtons();
                 this.scheduleAutosave();
                 this.showToast('Redo', 'info');
@@ -1111,8 +1120,8 @@
             }
 
             clearUndoHistory() {
-                this.undoStack.forEach(s => s.frames.forEach(f => this.releaseCanvas(f.canvas)));
-                this.redoStack.forEach(s => s.frames.forEach(f => this.releaseCanvas(f.canvas)));
+                this.undoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
+                this.redoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
                 this.undoStack = [];
                 this.redoStack = [];
                 this.updateUndoRedoButtons();
@@ -1685,6 +1694,12 @@
 
             releaseCanvas(canvas) {
                 if (!canvas) return;
+                const owners = this._canvasRefCounts.get(canvas);
+                if (owners > 1) {
+                    this._canvasRefCounts.set(canvas, owners - 1);
+                    return;
+                }
+                if (owners === 1) this._canvasRefCounts.delete(canvas);
                 canvas.width = 1;
                 canvas.height = 1;
                 const ctx = canvas.getContext('2d');
@@ -2666,7 +2681,7 @@
                 else targets = this.frames.map((_, i) => i);
 
                 targets.forEach(i => {
-                    const frame = this.frames[i];
+                    const frame = this.ensureWritableFrame(i);
                     const ctx = frame.canvas.getContext('2d', { willReadFrequently: true });
 
                     if (mode === 'black') {
@@ -3986,6 +4001,7 @@
                         : 'none'}`,
                     `Memory highest estimate: ${this.memoryTelemetry.peakEstimatedBytes} bytes`,
                     `Memory overrides: ${this.memoryTelemetry.overrideCount}`,
+                    `Undo history: ${this.estimateHistoryBytes()} of ${this.maxUndoBytes} bytes`,
                     `Last export profile: ${profile
                         ? `${profile.kind}, ${profile.durationMs}ms total, ${profile.maxFrameBlockMs}ms max block, cancelled ${yesNo(profile.cancelled)}`
                         : 'none'}`,
