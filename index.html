@@ -2308,6 +2308,9 @@
 
         const APP_VERSION = '0.6.0';
         const SESSION_SCHEMA_VERSION = 2;
+        const RECOVERY_LEASE_MS = 30_000;
+        const RECOVERY_HEARTBEAT_MS = 10_000;
+        const RECOVERY_KEY_PREFIX = 'session:';
         const MEBIBYTE = 1024 * 1024;
         const MEMORY_LIMITS = Object.freeze({
             lowDeviceDefault: 256 * MEBIBYTE,
@@ -2361,6 +2364,14 @@
                 this._lastSavedGeneration = 0;
                 this._storageErrorShown = false;
                 this.storageStatus = 'checking';
+                this.recoveryCoordinationStatus = 'initializing';
+                this._recoveryInstanceId = this.createRecoveryId('instance');
+                this._recoveryOwnerId = this.loadRecoveryOwnerId();
+                this._recoveryKey = `${RECOVERY_KEY_PREFIX}${this._recoveryOwnerId}`;
+                this._recoveryOwnerEpoch = 0;
+                this._recoveryChannel = null;
+                this._recoveryLeaseTimer = null;
+                this._recoveryConflictShown = false;
                 this._scriptLoads = new Map();
                 this.serviceWorkerStatus = 'not-available';
                 this._modalReturnFocus = null;
@@ -2411,6 +2422,8 @@
             init() {
                 this.bindEvents();
                 this.setActiveTool('select');
+                this.setDropZoneActive(true);
+                this.initializeRecoveryCoordination();
                 this.checkSessionRecovery();
             }
 
@@ -2655,6 +2668,125 @@
             // Session Autosave (IndexedDB)
             // ============================================
 
+            createRecoveryId(prefix) {
+                const random = globalThis.crypto?.randomUUID?.() ||
+                    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+                return `${prefix}-${random}`;
+            }
+
+            loadRecoveryOwnerId() {
+                const storageKey = 'gifstudioRecoveryOwner';
+                try {
+                    const existing = sessionStorage.getItem(storageKey);
+                    if (existing && /^[a-z0-9-]{12,}$/i.test(existing)) return existing;
+                    const created = this.createRecoveryId('tab');
+                    sessionStorage.setItem(storageKey, created);
+                    return created;
+                } catch {
+                    return this.createRecoveryId('tab');
+                }
+            }
+
+            initializeRecoveryCoordination() {
+                this.recoveryCoordinationStatus = 'isolated tab session';
+                if ('BroadcastChannel' in window) {
+                    this._recoveryChannel = new BroadcastChannel('gifstudio-recovery');
+                    this._recoveryChannel.addEventListener('message', event => {
+                        const message = event.data;
+                        if (
+                            message?.type !== 'claim' ||
+                            message.ownerId !== this._recoveryOwnerId ||
+                            message.instanceId === this._recoveryInstanceId
+                        ) return;
+
+                        // sessionStorage can be copied when a tab is duplicated. The
+                        // lexicographically later live instance yields the copied ID.
+                        if (this._recoveryInstanceId > message.instanceId) {
+                            this.rotateRecoveryOwner();
+                        } else {
+                            this.broadcastRecoveryClaim();
+                        }
+                    });
+                    this.broadcastRecoveryClaim();
+                }
+
+                this._recoveryLeaseTimer = setInterval(
+                    () => this.refreshRecoveryLease(),
+                    RECOVERY_HEARTBEAT_MS
+                );
+                window.addEventListener('pagehide', () => {
+                    if (this._recoveryLeaseTimer) clearInterval(this._recoveryLeaseTimer);
+                    this._recoveryChannel?.close();
+                }, { once: true });
+            }
+
+            broadcastRecoveryClaim() {
+                this._recoveryChannel?.postMessage({
+                    type: 'claim',
+                    ownerId: this._recoveryOwnerId,
+                    instanceId: this._recoveryInstanceId
+                });
+            }
+
+            rotateRecoveryOwner() {
+                this._recoveryOwnerId = this.createRecoveryId('tab');
+                this._recoveryKey = `${RECOVERY_KEY_PREFIX}${this._recoveryOwnerId}`;
+                this._recoveryOwnerEpoch++;
+                try {
+                    sessionStorage.setItem('gifstudioRecoveryOwner', this._recoveryOwnerId);
+                } catch {}
+                this.recoveryCoordinationStatus = 'copied tab isolated';
+                this.broadcastRecoveryClaim();
+                if (this.frames.length) this.scheduleAutosave();
+                this.showToast('This duplicated tab now has an independent recovery session.', 'info');
+            }
+
+            async readRecoveryEntries(db) {
+                const tx = db.transaction('session', 'readonly');
+                const store = tx.objectStore('session');
+                const keysRequest = store.getAllKeys();
+                const valuesRequest = store.getAll();
+                const [keys, values] = await Promise.all([
+                    new Promise((resolve, reject) => {
+                        keysRequest.onsuccess = () => resolve(keysRequest.result);
+                        keysRequest.onerror = () => reject(keysRequest.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        valuesRequest.onsuccess = () => resolve(valuesRequest.result);
+                        valuesRequest.onerror = () => reject(valuesRequest.error);
+                    })
+                ]);
+                return keys.map((key, index) => ({ key, record: values[index] }));
+            }
+
+            async refreshRecoveryLease() {
+                if (!this._lastSavedGeneration) return;
+                let db;
+                try {
+                    db = await this.openDB();
+                    const tx = db.transaction('session', 'readwrite');
+                    const store = tx.objectStore('session');
+                    const request = store.get(this._recoveryKey);
+                    request.onsuccess = () => {
+                        const record = request.result;
+                        if (!record || record.ownerId !== this._recoveryOwnerId) return;
+                        record.leaseExpiresAt = Date.now() + RECOVERY_LEASE_MS;
+                        store.put(record, this._recoveryKey);
+                    };
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                        tx.onabort = () => reject(tx.error || new Error('Recovery lease update aborted'));
+                    });
+                } catch (error) {
+                    if (error?.name !== 'AbortError') {
+                        this.recordDiagnosticError(error.message, 'recovery-coordination');
+                    }
+                } finally {
+                    if (db) db.close();
+                }
+            }
+
             openDB() {
                 return new Promise((resolve, reject) => {
                     const req = indexedDB.open('GifStudioSession', SESSION_SCHEMA_VERSION);
@@ -2806,6 +2938,9 @@
 
             async saveSession(generation = this._autosaveGeneration) {
                 if (this.frames.length === 0 || generation !== this._autosaveGeneration) return;
+                const recoveryOwnerId = this._recoveryOwnerId;
+                const recoveryKey = this._recoveryKey;
+                const recoveryOwnerEpoch = this._recoveryOwnerEpoch;
                 try {
                     this.preflightMemory('Recovery autosave', {
                         width: this.originalWidth,
@@ -2841,20 +2976,31 @@
                 let tx;
                 try {
                     db = await this.openDB();
-                    if (generation !== this._autosaveGeneration) return;
+                    if (
+                        generation !== this._autosaveGeneration ||
+                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
+                    ) return;
                     const frameData = [];
                     for (const frame of snapshot.frames) {
                         const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
                         if (!blob) throw new Error('Browser could not serialize a recovery frame');
-                        if (generation !== this._autosaveGeneration) return;
+                        if (
+                            generation !== this._autosaveGeneration ||
+                            recoveryOwnerEpoch !== this._recoveryOwnerEpoch
+                        ) return;
                         const buf = await blob.arrayBuffer();
                         frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
                     }
-                    if (generation !== this._autosaveGeneration) return;
+                    if (
+                        generation !== this._autosaveGeneration ||
+                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
+                    ) return;
                     const session = {
                         schemaVersion: SESSION_SCHEMA_VERSION,
                         appVersion: APP_VERSION,
                         generation,
+                        ownerId: recoveryOwnerId,
+                        leaseExpiresAt: Date.now() + RECOVERY_LEASE_MS,
                         frames: frameData,
                         width: snapshot.width,
                         height: snapshot.height,
@@ -2865,11 +3011,14 @@
                     };
                     tx = db.transaction('session', 'readwrite');
                     this._autosaveTransaction = tx;
-                    if (generation !== this._autosaveGeneration) {
+                    if (
+                        generation !== this._autosaveGeneration ||
+                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
+                    ) {
                         tx.abort();
                         return;
                     }
-                    tx.objectStore('session').put(session, 'current');
+                    tx.objectStore('session').put(session, recoveryKey);
                     await new Promise((resolve, reject) => {
                         tx.oncomplete = resolve;
                         tx.onerror = () => reject(tx.error);
@@ -2878,7 +3027,13 @@
                     if (generation === this._autosaveGeneration) {
                         this._lastSavedGeneration = generation;
                         this.storageStatus = 'ready';
+                        this.recoveryCoordinationStatus = 'owned by this tab';
                         this._storageErrorShown = false;
+                        this._recoveryChannel?.postMessage({
+                            type: 'saved',
+                            ownerId: recoveryOwnerId,
+                            savedAt: session.savedAt
+                        });
                     }
                 } catch (e) {
                     if (generation === this._autosaveGeneration && e?.name !== 'AbortError') {
@@ -2895,31 +3050,73 @@
                 let db;
                 try {
                     db = await this.openDB();
-                    const tx = db.transaction('session', 'readonly');
-                    const req = tx.objectStore('session').get('current');
-                    const session = await new Promise((resolve, reject) => {
-                        req.onsuccess = () => resolve(req.result);
-                        req.onerror = () => reject(req.error);
-                    });
-                    if (!session) return;
-                    const migrated = this.migrateSession(session);
+                    const now = Date.now();
+                    const entries = await this.readRecoveryEntries(db);
+                    const own = entries.find(entry => entry.key === this._recoveryKey);
+                    const legacy = entries.find(entry => entry.key === 'current');
+                    const expired = entries
+                        .filter(entry =>
+                            entry.key !== this._recoveryKey &&
+                            entry.key !== 'current' &&
+                            (!Number.isFinite(entry.record?.leaseExpiresAt) ||
+                                entry.record.leaseExpiresAt <= now)
+                        )
+                        .sort((a, b) => (b.record?.savedAt || 0) - (a.record?.savedAt || 0));
+                    const activeOthers = entries.filter(entry =>
+                        entry.key !== this._recoveryKey &&
+                        entry.key !== 'current' &&
+                        Number.isFinite(entry.record?.leaseExpiresAt) &&
+                        entry.record.leaseExpiresAt > now
+                    );
+                    if (activeOthers.length) {
+                        this.recoveryCoordinationStatus =
+                            `${activeOthers.length} other active tab${activeOthers.length === 1 ? '' : 's'} isolated`;
+                        if (!this._recoveryConflictShown) {
+                            this._recoveryConflictShown = true;
+                            this.showToast(
+                                'Another GifStudio tab has an active recovery. This tab will save separately.',
+                                'warning'
+                            );
+                        }
+                    }
+
+                    const candidate = own || legacy || expired[0];
+                    if (!candidate) return;
+                    let migrated;
+                    try {
+                        migrated = this.migrateSession(candidate.record);
+                    } catch (error) {
+                        error.recoveryKey = candidate.key;
+                        error.recoveryOwnerId = candidate.record?.ownerId || null;
+                        error.recoverySavedAt = candidate.record?.savedAt;
+                        throw error;
+                    }
 
                     const age = Date.now() - (migrated.savedAt || 0);
                     if (age > 7 * 24 * 60 * 60 * 1000) {
-                        await this.clearSavedSession();
+                        await this.clearSavedSession({
+                            key: candidate.key,
+                            expectedOwnerId: migrated.ownerId || null,
+                            expectedSavedAt: migrated.savedAt
+                        });
                         return;
                     }
 
                     const mins = Math.round(age / 60000);
                     const timeAgo = mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
-                    this.showRecoveryBanner(migrated, timeAgo);
+                    this.showRecoveryBanner(migrated, timeAgo, candidate.key);
                 } catch (e) {
                     if (e?.name === 'VersionError') {
                         console.error('Session recovery version mismatch:', e);
                         this.showToast('Saved recovery belongs to a newer GifStudio version and was retained unchanged.', 'warning');
                     } else if (e?.name === 'DataError' || /^Recovery /.test(e?.message || '')) {
                         console.error('Invalid recovery record:', e);
-                        await this.clearSavedSession({ reportErrors: false });
+                        await this.clearSavedSession({
+                            key: e.recoveryKey || 'current',
+                            expectedOwnerId: e.recoveryOwnerId,
+                            expectedSavedAt: e.recoverySavedAt,
+                            reportErrors: false
+                        });
                         this.showToast('Saved recovery was invalid and has been removed. Import the source file to continue.', 'error');
                     } else {
                         this.reportStorageError('Session recovery check failed', e);
@@ -2929,7 +3126,7 @@
                 }
             }
 
-            showRecoveryBanner(session, timeAgo) {
+            showRecoveryBanner(session, timeAgo, recoveryKey = this._recoveryKey) {
                 document.getElementById('recoveryBanner')?.remove();
                 const banner = document.createElement('div');
                 banner.id = 'recoveryBanner';
@@ -2948,15 +3145,33 @@
                 restoreBtn.textContent = 'Restore';
                 restoreBtn.onclick = async () => {
                     banner.remove();
-                    await this.restoreSession(session);
-                    document.getElementById('exportBtn').focus();
+                    const restored = await this.restoreSession(session, recoveryKey);
+                    if (restored) {
+                        if (this._autosaveTimer) {
+                            clearTimeout(this._autosaveTimer);
+                            this._autosaveTimer = null;
+                        }
+                        await this.saveSession(this._autosaveGeneration);
+                        if (recoveryKey !== this._recoveryKey) {
+                            await this.clearSavedSession({
+                                key: recoveryKey,
+                                expectedOwnerId: session.ownerId || null,
+                                expectedSavedAt: session.savedAt
+                            });
+                        }
+                        document.getElementById('exportBtn').focus();
+                    }
                 };
                 const dismissBtn = document.createElement('button');
                 dismissBtn.className = 'btn btn-ghost';
                 dismissBtn.textContent = 'Dismiss';
                 dismissBtn.onclick = async () => {
                     banner.remove();
-                    await this.clearSavedSession();
+                    await this.clearSavedSession({
+                        key: recoveryKey,
+                        expectedOwnerId: session.ownerId || null,
+                        expectedSavedAt: session.savedAt
+                    });
                     document.getElementById('importBtn').focus();
                 };
                 actions.appendChild(restoreBtn);
@@ -2965,7 +3180,7 @@
                 document.body.appendChild(banner);
             }
 
-            async restoreSession(session) {
+            async restoreSession(session, recoveryKey = this._recoveryKey) {
                 const token = this.beginOperation('Session restore');
                 if (!token) return;
                 const restoredFrames = [];
@@ -3009,33 +3224,71 @@
                     committed = true;
                     this.restoreEditorState(session.editorState);
                     this.showToast(`Restored ${restoredFrames.length} frames`, 'success');
+                    return true;
                 } catch (error) {
                     if (!committed) this.releaseFrames(restoredFrames);
                     if (error.name !== 'AbortError') {
                         console.error('Session restore failed:', error);
                         this.showToast('Recovery failed: ' + error.message, 'error');
                         if (error.name !== 'MemoryBudgetError') {
-                            await this.clearSavedSession({ reportErrors: false });
+                            await this.clearSavedSession({
+                                key: recoveryKey,
+                                expectedOwnerId: session.ownerId || null,
+                                expectedSavedAt: session.savedAt,
+                                reportErrors: false
+                            });
                         }
                     }
+                    return false;
                 } finally {
                     this.finishOperation(token);
                 }
             }
 
-            async clearSavedSession({ reportErrors = true } = {}) {
+            async clearSavedSession({
+                key = this._recoveryKey,
+                expectedOwnerId = key === this._recoveryKey ? this._recoveryOwnerId : undefined,
+                expectedSavedAt,
+                reportErrors = true
+            } = {}) {
                 let db;
                 try {
                     db = await this.openDB();
                     const tx = db.transaction('session', 'readwrite');
-                    tx.objectStore('session').delete('current');
+                    const store = tx.objectStore('session');
+                    const request = store.get(key);
+                    let deleted = false;
+                    request.onsuccess = () => {
+                        const record = request.result;
+                        if (!record) return;
+                        const ownerChanged = expectedOwnerId !== undefined &&
+                            (record.ownerId || null) !== expectedOwnerId;
+                        const recordChanged = expectedSavedAt !== undefined &&
+                            record.savedAt !== expectedSavedAt;
+                        const activeOtherOwner =
+                            key !== this._recoveryKey &&
+                            record.ownerId &&
+                            record.ownerId !== this._recoveryOwnerId &&
+                            record.leaseExpiresAt > Date.now();
+                        if (ownerChanged || recordChanged || activeOtherOwner) {
+                            this.recoveryCoordinationStatus = 'stale delete prevented';
+                            return;
+                        }
+                        store.delete(key);
+                        deleted = true;
+                    };
                     await new Promise((resolve, reject) => {
                         tx.oncomplete = resolve;
                         tx.onerror = () => reject(tx.error);
                         tx.onabort = () => reject(tx.error || new Error('Recovery delete aborted'));
                     });
+                    if (!deleted && request.result) {
+                        this.showToast('Recovery changed in another tab and was kept.', 'warning');
+                    }
+                    return deleted;
                 } catch (e) {
                     if (reportErrors) this.reportStorageError('Could not clear recovery', e);
+                    return false;
                 } finally {
                     if (db) db.close();
                 }
@@ -3817,8 +4070,18 @@
                 }
             }
 
+            setDropZoneActive(active) {
+                this.dropZone.classList.toggle('hidden', !active);
+                this.dropZone.inert = !active;
+                if (active) {
+                    this.dropZone.removeAttribute('aria-hidden');
+                } else {
+                    this.dropZone.setAttribute('aria-hidden', 'true');
+                }
+            }
+
             showEditor() {
-                this.dropZone.classList.add('hidden');
+                this.setDropZoneActive(false);
                 this.canvasWrapper.style.display = 'block';
                 this.timeline.style.display = 'flex';
 
@@ -6040,6 +6303,7 @@
                     `Service worker state: ${this.serviceWorkerStatus}`,
                     `Offline cache controlled: ${yesNo(Boolean(navigator.serviceWorker?.controller))}`,
                     `Recovery storage: ${this.storageStatus}`,
+                    `Recovery coordination: ${this.recoveryCoordinationStatus}`,
                     `IndexedDB: ${yesNo('indexedDB' in window)}`,
                     `WebAssembly: ${yesNo(typeof WebAssembly !== 'undefined')}`,
                     `Cross-origin isolated: ${yesNo(window.crossOriginIsolated)}`,

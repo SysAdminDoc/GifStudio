@@ -39,7 +39,7 @@ function parseStoredZip(buffer) {
   return entries;
 }
 
-async function readRecoveryRecord(page) {
+async function readRecoveryEntries(page) {
   return page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('GifStudioSession', 2);
@@ -47,15 +47,32 @@ async function readRecoveryRecord(page) {
       request.onerror = () => reject(request.error);
     });
     try {
-      return await new Promise((resolve, reject) => {
-        const request = db.transaction('session').objectStore('session').get('current');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
+      const transaction = db.transaction('session');
+      const store = transaction.objectStore('session');
+      const keysRequest = store.getAllKeys();
+      const valuesRequest = store.getAll();
+      const [keys, values] = await Promise.all([
+        new Promise((resolve, reject) => {
+          keysRequest.onsuccess = () => resolve(keysRequest.result);
+          keysRequest.onerror = () => reject(keysRequest.error);
+        }),
+        new Promise((resolve, reject) => {
+          valuesRequest.onsuccess = () => resolve(valuesRequest.result);
+          valuesRequest.onerror = () => reject(valuesRequest.error);
+        })
+      ]);
+      return keys.map((key, index) => ({ key, record: values[index] }));
     } finally {
       db.close();
     }
   });
+}
+
+async function readRecoveryRecord(page) {
+  const entries = await readRecoveryEntries(page);
+  return entries
+    .map(entry => entry.record)
+    .sort((a, b) => (b?.savedAt || 0) - (a?.savedAt || 0))[0];
 }
 
 test.beforeEach(async ({ page }) => {
@@ -79,6 +96,29 @@ test('shipped page boots without console or uncaught errors', async ({ page }) =
 
   expect(errors).toEqual([]);
   await expect(page.getByRole('heading', { name: 'Drop a GIF or image sequence' })).toBeVisible();
+});
+
+test('loaded projects remove the import surface from focus and accessibility navigation', async ({ page }) => {
+  const dropZone = page.locator('#dropZone');
+  const chooseFiles = page.locator('#chooseFilesBtn');
+
+  await expect(dropZone).not.toHaveAttribute('aria-hidden');
+  await expect(dropZone).not.toHaveAttribute('inert');
+  await chooseFiles.focus();
+  await expect(chooseFiles).toBeFocused();
+
+  await page.locator('#fileInput').setInputFiles(gifFile('focus.gif'));
+  await expect(dropZone).toHaveAttribute('aria-hidden', 'true');
+  await expect(dropZone).toHaveAttribute('inert', '');
+  await expect(page.getByRole('button', { name: 'Choose files' })).toHaveCount(0);
+  await chooseFiles.focus();
+  await expect(chooseFiles).not.toBeFocused();
+
+  await page.evaluate(() => editor.setDropZoneActive(true));
+  await expect(dropZone).not.toHaveAttribute('aria-hidden');
+  await expect(dropZone).not.toHaveAttribute('inert');
+  await chooseFiles.focus();
+  await expect(chooseFiles).toBeFocused();
 });
 
 test('diagnostics copy capability state and sanitized errors without media identifiers', async ({ page }) => {
@@ -554,6 +594,81 @@ test('autosave recovery restores frame state after reload', async ({ page }) => 
   await expect(page.locator('#exportBtn')).toBeFocused();
 });
 
+test('recovery ownership isolates tabs and reclaims an abandoned lease', async ({ page, context }) => {
+  await page.locator('#fileInput').setInputFiles(gifFile('first-tab.gif'));
+  await page.locator('#frameDelay').fill('11');
+  await page.locator('#applyDelayAll').click();
+  await page.waitForTimeout(2_500);
+
+  const secondPage = await context.newPage();
+  await secondPage.goto('/');
+  await expect(secondPage.locator('.toast.warning')).toContainText(
+    'Another GifStudio tab has an active recovery'
+  );
+  await secondPage.locator('#fileInput').setInputFiles(gifFile('second-tab.gif'));
+  await secondPage.locator('#frameDelay').fill('23');
+  await secondPage.locator('#applyDelayAll').click();
+  await secondPage.waitForTimeout(2_500);
+
+  let entries = await readRecoveryEntries(page);
+  expect(entries).toHaveLength(2);
+  expect(new Set(entries.map(entry => entry.record.ownerId)).size).toBe(2);
+  expect(entries.map(entry => entry.record.frames[0].delay).sort((a, b) => a - b)).toEqual([110, 230]);
+
+  const secondEntry = entries.find(entry => entry.record.frames[0].delay === 230);
+  const staleDelete = await page.evaluate(
+    ({ key, ownerId, savedAt }) => editor.clearSavedSession({
+      key,
+      expectedOwnerId: ownerId,
+      expectedSavedAt: savedAt
+    }),
+    {
+      key: secondEntry.key,
+      ownerId: secondEntry.record.ownerId,
+      savedAt: secondEntry.record.savedAt
+    }
+  );
+  expect(staleDelete).toBe(false);
+  expect(await readRecoveryEntries(page)).toHaveLength(2);
+
+  await page.evaluate(() => editor.clearSavedSession());
+  entries = await readRecoveryEntries(page);
+  expect(entries).toHaveLength(1);
+  expect(entries[0].record.frames[0].delay).toBe(230);
+
+  await secondPage.close();
+  await page.evaluate(async key => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('GifStudioSession', 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('session', 'readwrite');
+      const store = tx.objectStore('session');
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const record = request.result;
+        record.leaseExpiresAt = Date.now() - 1;
+        store.put(record, key);
+      };
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, entries[0].key);
+
+  const reclaimPage = await context.newPage();
+  await reclaimPage.goto('/');
+  await expect(reclaimPage.getByRole('region', { name: 'Saved session recovery' })).toBeVisible();
+  await reclaimPage.getByRole('button', { name: 'Restore' }).click();
+  await expect(reclaimPage.locator('#currentDelay')).toHaveText('230');
+  await expect.poll(async () => (await readRecoveryEntries(reclaimPage)).length).toBe(1);
+  const reclaimed = await readRecoveryEntries(reclaimPage);
+  expect(reclaimed[0].record.ownerId).not.toBe(secondEntry.record.ownerId);
+  await reclaimPage.close();
+});
+
 test('legacy recovery records migrate and corrupt records are removed', async ({ page }) => {
   await page.locator('#fileInput').setInputFiles(gifFile('legacy.gif'));
   await page.waitForTimeout(2_500);
@@ -564,17 +679,21 @@ test('legacy recovery records migrate and corrupt records are removed', async ({
       request.onerror = () => reject(request.error);
     });
     const existing = await new Promise((resolve, reject) => {
-      const request = db.transaction('session').objectStore('session').get('current');
+      const request = db.transaction('session').objectStore('session').getAll();
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
-    });
+    }).then(records => records.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0]);
     delete existing.schemaVersion;
     delete existing.appVersion;
     delete existing.editorState;
     delete existing.sourceTiming;
+    delete existing.ownerId;
+    delete existing.leaseExpiresAt;
     await new Promise((resolve, reject) => {
       const tx = db.transaction('session', 'readwrite');
-      tx.objectStore('session').put(existing, 'current');
+      const store = tx.objectStore('session');
+      store.clear();
+      store.put(existing, 'current');
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
@@ -594,7 +713,9 @@ test('legacy recovery records migrate and corrupt records are removed', async ({
     });
     await new Promise((resolve, reject) => {
       const tx = db.transaction('session', 'readwrite');
-      tx.objectStore('session').put({
+      const store = tx.objectStore('session');
+      store.clear();
+      store.put({
         schemaVersion: 2,
         width: 1,
         height: 1,

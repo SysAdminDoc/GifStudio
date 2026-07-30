@@ -50,7 +50,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 - **Local Diagnostics** — Copy app/capability/fallback, memory, export-profile, and sanitized error text without frames, filenames, URLs, user-agent data, or telemetry
 
 ### Accessibility & Mobile
-- **ARIA Support** — Screen reader roles on canvas, timeline, modal, toast, and sidebar
+- **ARIA Support** — Screen reader roles on canvas, timeline, modal, toast, and sidebar; hidden import controls become inert while a project is loaded
 - **Keyboard Navigation** — Focus-visible outlines, proper label associations, Escape to close modals
 - **Reduced Motion** — Respects `prefers-reduced-motion` for UI animations
 - **Mobile Drawer** — Sidebar slides out on small screens via hamburger toggle
@@ -69,7 +69,7 @@ Browser-based GIF creation and editing studio. Create, edit, optimize, and expor
 | Output validation | GIF/APNG downloads and success messages occur only after structural, dimension, frame-control, and encoded-timing checks pass. |
 | Split-frame ZIP | PNG splitting uses the shared progress/cancel flow, checks serialization and CRCs, and stops before allocation above 500 entries or a 512 MiB estimated/actual ZIP. Output basenames are normalized for cross-platform filesystems. |
 | Browser APIs | Direct Save uses the File System Access API when present and downloads otherwise. Share appears only when the Web Share API accepts files. |
-| Recovery | A versioned IndexedDB session is retained for up to seven days or until dismissed. Superseded saves are aborted; storage failures advise exporting before leaving the tab. |
+| Recovery | Versioned IndexedDB sessions are isolated per browser tab and retained for up to seven days or until dismissed. Superseded saves are aborted, stale tabs cannot delete active records, abandoned sessions can be reclaimed, and storage failures advise exporting before leaving the tab. |
 | Diagnostics | The sidebar report identifies decoder/save/share/clipboard/service-worker/storage/codec fallbacks and the last sanitized error. It contains project dimensions/count but excludes media, filenames, URLs, user-agent data, and telemetry. |
 
 GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 changed-region encoder was superseded by gifenc in v0.4.0 because safe local-frame encoding needs look-ahead disposal handling for opaque-to-transparent transitions. The bundled optimizer remains the supported size-reduction path.
