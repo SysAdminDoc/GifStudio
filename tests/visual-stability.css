@@ -1,0 +1,12 @@
+*,
+*::before,
+*::after {
+  animation: none !important;
+  caret-color: transparent !important;
+  transition: none !important;
+}
+
+#toastContainer,
+#storageDurabilityStatus {
+  visibility: hidden !important;
+}

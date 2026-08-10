@@ -13,13 +13,24 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: 'line',
   expect: {
-    timeout: 10_000
+    timeout: 10_000,
+    toHaveScreenshot: {
+      animations: 'disabled',
+      caret: 'hide',
+      maxDiffPixelRatio: 0.02,
+      stylePath: './tests/visual-stability.css'
+    }
   },
+  snapshotPathTemplate: '{testDir}/visual-snapshots/{arg}{ext}',
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    {
+      name: 'chromium',
+      testIgnore: '**/visual.e2e.mjs',
+      use: { browserName: 'chromium' }
+    },
     {
       name: 'firefox',
-      testIgnore: '**/storage.e2e.mjs',
+      testIgnore: ['**/storage.e2e.mjs', '**/visual.e2e.mjs'],
       use: {
         browserName: 'firefox',
         launchOptions: {
@@ -30,7 +41,16 @@ export default defineConfig({
         }
       }
     },
-    { name: 'webkit', use: { browserName: 'webkit' } }
+    {
+      name: 'webkit',
+      testIgnore: '**/visual.e2e.mjs',
+      use: { browserName: 'webkit' }
+    },
+    {
+      name: 'visual-chromium',
+      testMatch: '**/visual.e2e.mjs',
+      use: { browserName: 'chromium' }
+    }
   ],
   use: {
     baseURL: 'http://127.0.0.1:18766',

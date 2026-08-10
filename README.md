@@ -89,6 +89,7 @@ npm ci
 npx playwright install chromium firefox webkit
 npm run build:artifact
 npm test
+npm run test:visual:update # explicitly review and refresh screenshot baselines
 npm run lint
 npm run build
 ```
@@ -101,7 +102,7 @@ JavaScript source is maintained in three boundaries:
 
 `src/index.template.html` owns the document/CSS shell. `npm run build:artifact` normalizes line endings and embeds those boundaries to generate the zero-install `index.html`; do not hand-edit the generated scripts. `npm run check:artifact` fails on any byte drift, and `.gitattributes` pins text files to LF so a clean checkout reproduces the same artifact across platforms.
 
-`npm test` first checks artifact reproducibility, then runs deterministic parser fixtures, truncation sweeps, and bounded byte mutations directly against `src/gif-decoder.js` before Playwright exercises the shipped `index.html` in Chromium, Firefox, and WebKit. Optional browser capabilities are gated explicitly while the shared import, edit, export, recovery, accessibility, and offline contracts run in every engine. The static release check parses both source and embedded scripts and also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
+`npm test` first checks artifact reproducibility, then runs deterministic parser fixtures, truncation sweeps, and bounded byte mutations directly against `src/gif-decoder.js` before Playwright exercises the shipped `index.html` in Chromium, Firefox, and WebKit. A separate Chromium project compares deterministic baselines for the empty workspace, loaded editor, recovery banner, export modal, and 390-pixel drawer; baseline changes require the explicit `npm run test:visual:update` command and review. Optional browser capabilities are gated explicitly while the shared import, edit, export, recovery, accessibility, and offline contracts run in every engine. The static release check parses both source and embedded scripts and also verifies version consistency, CSP, manifest/icon references, service-worker registration, vendored codec hashes/SRI, and the README badge. CI runs the same commands on every push and pull request.
 
 ## License
 
