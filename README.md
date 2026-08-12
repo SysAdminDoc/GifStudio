@@ -86,6 +86,7 @@ GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 ch
 
 ```powershell
 npm ci
+npm run check:vendor
 npx playwright install chromium firefox webkit
 npm run build:artifact
 npm test
@@ -93,6 +94,8 @@ npm run test:visual:update # explicitly review and refresh screenshot baselines
 npm run lint
 npm run build
 ```
+
+npm run refresh:vendor stages the exact lockfile-resolved codec payloads and upstream license files, regenerates vendor/integrity.json, updates the versioned asset references, and rebuilds index.html. Run npm run check:vendor to detect payload/license drift; it also reruns the adopted pako 3.0.1 APNG byte, round-trip, and Chromium/Firefox/WebKit gate. The UPNG.js allocation guard is recorded in the generated metadata and reapplied deterministically.
 
 JavaScript source is maintained in three boundaries:
 
@@ -108,4 +111,4 @@ JavaScript source is maintained in three boundaries:
 
 MIT License
 
-Bundled optional codecs retain their upstream licenses: pako 2.1.0 (MIT and Zlib), UPNG.js 2.1.0 (MIT), and gifsicle-wasm-browser 1.5.19 (MIT). Exact source hashes and license texts are under `vendor/`.
+Bundled optional codecs retain their upstream licenses: pako 3.0.1 (MIT and Zlib), UPNG.js 2.1.0 (MIT), and gifsicle-wasm-browser 1.5.19 (MIT). Exact source hashes and license texts are under `vendor/`.

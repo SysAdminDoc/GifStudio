@@ -10,7 +10,7 @@ const APP_SHELL = [
     './icons/icon-192-maskable.png',
     './icons/icon-512.png',
     './icons/icon-512-maskable.png',
-    './vendor/pako-2.1.0.min.js',
+    './vendor/pako-3.0.1.min.js',
     './vendor/upng-2.1.0.js',
     './vendor/gifsicle-wasm-browser-1.5.19.min.js'
 ];

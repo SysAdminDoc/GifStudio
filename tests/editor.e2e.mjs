@@ -545,9 +545,9 @@ test('APNG export emits PNG and animation control signatures', async ({ page }) 
   await expect(page.locator('#analyzerContent')).toContainText('Image sequence · decoded frames');
   await expect(page.locator('#analyzerContent')).toContainText('Raw GIF block metadata unavailable');
   await expect(page.locator('#analyzerContent')).toContainText('Validated APNG output · 1×1 · 2 frames');
-  await expect(page.locator('script[src="vendor/pako-2.1.0.min.js"]')).toHaveAttribute(
+  await expect(page.locator('script[src="vendor/pako-3.0.1.min.js"]')).toHaveAttribute(
     'integrity',
-    'sha256-7eJpOkpqUSa501ZpBis1jsq2rnubhqHPMC/rRahRSQc='
+    'sha256-thEzOhpy7FmIersTzNEDVCGfSY1fIRwACdXr1KNW3eg='
   );
   await expect(page.locator('script[src="vendor/upng-2.1.0.js"]')).toHaveAttribute(
     'integrity',
@@ -710,7 +710,7 @@ test('service worker caches the app shell for offline reload and exposes update 
     '/icons/icon-192-maskable.png',
     '/icons/icon-512.png',
     '/icons/icon-512-maskable.png',
-    '/vendor/pako-2.1.0.min.js',
+    '/vendor/pako-3.0.1.min.js',
     '/vendor/upng-2.1.0.js',
     '/vendor/gifsicle-wasm-browser-1.5.19.min.js'
   ]));

@@ -81,6 +81,11 @@ for (const [filename, metadata] of Object.entries(integrityManifest)) {
   const path = new URL(`vendor/${filename}`, root);
   assert.ok(fs.existsSync(path), `vendored asset does not exist: ${filename}`);
   const bytes = fs.readFileSync(path);
+  assert.ok(metadata.package && metadata.version && metadata.source, 'vendor provenance is missing: ' + filename);
+  assert.ok(metadata.licenseFile && metadata.license, 'vendor license metadata is missing: ' + filename);
+  const licensePath = new URL('vendor/' + metadata.licenseFile, root);
+  assert.ok(fs.existsSync(licensePath), 'vendored license does not exist: ' + metadata.licenseFile);
+  assert.ok(fs.statSync(licensePath).size > 0, 'vendored license is empty: ' + metadata.licenseFile);
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
   const sri = `sha256-${crypto.createHash('sha256').update(bytes).digest('base64')}`;
   assert.equal(hash, metadata.sha256, `vendored asset hash changed: ${filename}`);

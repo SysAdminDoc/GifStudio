@@ -1,17 +1,30 @@
 {
-  "gifsicle-wasm-browser-1.5.19.min.js": {
-    "sha256": "c2b9ef1acd3ca20a0795fec66496a24ec6001f53836113c0255bd4464662a9cd",
-    "integrity": "sha256-wrnvGs08ogoHlf7GZJaiTsYAH1ODYRPAJVvURkZiqc0=",
-    "license": "MIT"
-  },
-  "pako-2.1.0.min.js": {
-    "sha256": "ede2693a4a6a5126b9d35669062b358ecab6ae7b9b86a1cf302feb45a8514907",
-    "integrity": "sha256-7eJpOkpqUSa501ZpBis1jsq2rnubhqHPMC/rRahRSQc=",
-    "license": "MIT AND Zlib"
+  "pako-3.0.1.min.js": {
+    "package": "pako",
+    "version": "3.0.1",
+    "source": "dist/browser/pako.umd.min.js",
+    "licenseFile": "pako-3.0.1.LICENSE.txt",
+    "license": "(MIT AND Zlib)",
+    "sha256": "b611333a1a72ec59887abb13ccd10354219f498d5f211c0009d5ebd4a356dde8",
+    "integrity": "sha256-thEzOhpy7FmIersTzNEDVCGfSY1fIRwACdXr1KNW3eg="
   },
   "upng-2.1.0.js": {
+    "package": "upng-js",
+    "version": "2.1.0",
+    "source": "UPNG.js",
+    "licenseFile": "upng-2.1.0.LICENSE.txt",
+    "license": "MIT",
+    "patch": "apng-allocation-guard-v1",
     "sha256": "6975394663ac720cd051522c773ce6a54e3518f737ae5f2fde4983f5fcfb53e5",
-    "integrity": "sha256-aXU5RmOscgzQUVIsdzzmpU41GPc3rl8v3kmD9fz7U+U=",
-    "license": "MIT"
+    "integrity": "sha256-aXU5RmOscgzQUVIsdzzmpU41GPc3rl8v3kmD9fz7U+U="
+  },
+  "gifsicle-wasm-browser-1.5.19.min.js": {
+    "package": "gifsicle-wasm-browser",
+    "version": "1.5.19",
+    "source": "dist/gifsicle.min.js",
+    "licenseFile": "gifsicle-wasm-browser-1.5.19.LICENSE.txt",
+    "license": "MIT",
+    "sha256": "c2b9ef1acd3ca20a0795fec66496a24ec6001f53836113c0255bd4464662a9cd",
+    "integrity": "sha256-wrnvGs08ogoHlf7GZJaiTsYAH1ODYRPAJVvURkZiqc0="
   }
 }

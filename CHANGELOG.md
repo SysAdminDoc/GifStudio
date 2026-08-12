@@ -4,6 +4,7 @@ All notable changes to GifStudio will be documented in this file.
 
 ## [Unreleased]
 
+- Changed: Vendored codecs now refresh from exact package payloads with generated provenance, licenses, and drift checks; pako 3.0.1 passed APNG byte/round-trip parity in Node, Chromium, Firefox, and WebKit.
 - Added: PWA manifest colors now match the graphite token palette, with validated 192- and 512-pixel any/maskable icons cached for offline installation.
 - Testing: CI now compares deterministic Chromium screenshots for the empty workspace, loaded editor, recovery banner, export modal, and 390-pixel drawer; baseline refreshes require an explicit review command.
 - Accessibility: Sidebar edit sections are keyboard-operated disclosures with persisted open state, and choosing Crop or Redact reveals its controls automatically.
