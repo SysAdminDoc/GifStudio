@@ -1,6 +1,6 @@
 # GifStudio
 
-![Version](https://img.shields.io/badge/version-v0.6.0-brightgreen)
+![Version](https://img.shields.io/badge/version-v0.7.0-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Browser-blueviolet)
 ![Language](https://img.shields.io/badge/language-JavaScript-yellow)
@@ -86,8 +86,8 @@ GIF export intentionally uses full-canvas frame descriptors. The older v0.2.0 ch
 
 ```powershell
 npm ci
-npm run check:vendor
 npx playwright install chromium firefox webkit
+npm run check:vendor
 npm run build:artifact
 npm test
 npm run test:visual:update # explicitly review and refresh screenshot baselines
@@ -95,12 +95,13 @@ npm run lint
 npm run build
 ```
 
-npm run refresh:vendor stages the exact lockfile-resolved codec payloads and upstream license files, regenerates vendor/integrity.json, updates the versioned asset references, and rebuilds index.html. Run npm run check:vendor to detect payload/license drift; it also reruns the adopted pako 3.0.1 APNG byte, round-trip, and Chromium/Firefox/WebKit gate. The UPNG.js allocation guard is recorded in the generated metadata and reapplied deterministically.
+`npm run refresh:vendor` stages the exact lockfile-resolved codec payloads and upstream license files, regenerates `vendor/integrity.json`, updates the versioned asset references, and rebuilds `index.html`. Run `npm run check:vendor` to detect payload/license drift; it also reruns the adopted pako 3.0.1 APNG byte, round-trip, and Chromium/Firefox/WebKit gate. The UPNG.js allocation guard is recorded in the generated metadata and reapplied deterministically.
 
-JavaScript source is maintained in three boundaries:
+JavaScript source is maintained in three generated boundaries:
 
 - `src/gif-decoder.js` — strict GIF parser/decompressor, loaded directly by Node unit tests
 - `src/gif-encoder.js` — bundled gifenc core and the GifStudio encoder wrapper
+- `src/history-controller.js`, `src/recovery-controller.js`, and `src/export-controller.js` — dependency-injected editor lifecycle controllers with focused unit tests
 - `src/app.js` — editor state, storage, operations, exporters, and UI behavior
 
 `src/index.template.html` owns the document/CSS shell. `npm run build:artifact` normalizes line endings and embeds those boundaries to generate the zero-install `index.html`; do not hand-edit the generated scripts. `npm run check:artifact` fails on any byte drift, and `.gitattributes` pins text files to LF so a clean checkout reproduces the same artifact across platforms.

@@ -4,6 +4,8 @@ All notable changes to GifStudio will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-08-12
+
 - Added: GIFEditor now delegates history, recovery, and export lifecycles to dependency-injected controllers with focused unit coverage while preserving the shipped artifact and cross-browser behavior.
 - Changed: Vendored codecs now refresh from exact package payloads with generated provenance, licenses, and drift checks; pako 3.0.1 passed APNG byte/round-trip parity in Node, Chromium, Firefox, and WebKit.
 - Added: PWA manifest colors now match the graphite token palette, with validated 192- and 512-pixel any/maskable icons cached for offline installation.

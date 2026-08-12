@@ -158,7 +158,7 @@ test('diagnostics copy capability state and sanitized errors without media ident
   await expect(page.locator('.toast.success').last()).toContainText('Diagnostics copied without media or filenames');
   const report = await page.evaluate(() => window.__copiedDiagnostics);
 
-  expect(report).toContain('App version: 0.6.0');
+  expect(report).toContain('App version: 0.7.0');
   expect(report).toContain('Dimensions: 1x1');
   expect(report).toContain('Frame count: 1');
   expect(report).toContain('Selected format: GIF');
@@ -699,7 +699,7 @@ test('service worker caches the app shell for offline reload and exposes update 
     expect.objectContaining({ src: 'icons/icon-512-maskable.png', sizes: '512x512', purpose: 'maskable' })
   ]));
   const cachedPaths = await page.evaluate(async () => {
-    const cache = await caches.open('gifstudio-v0.6.0');
+    const cache = await caches.open('gifstudio-v0.7.0');
     return (await cache.keys()).map(request => new URL(request.url).pathname);
   });
   expect(cachedPaths).toEqual(expect.arrayContaining([
@@ -722,7 +722,7 @@ test('service worker caches the app shell for offline reload and exposes update 
       description: 'webkit: Playwright offline navigation reload is unavailable; cached shell verified through the active service worker'
     });
     const offlineShell = await page.evaluate(async () => {
-      const cache = await caches.open('gifstudio-v0.6.0');
+      const cache = await caches.open('gifstudio-v0.7.0');
       const response = await cache.match('./index.html');
       return { ok: response.ok, text: await response.text() };
     });
@@ -797,7 +797,7 @@ test('autosave recovery restores frame state after reload', async ({ page }) => 
 
   const record = await readRecoveryRecord(page);
   expect(record.schemaVersion).toBe(2);
-  expect(record.appVersion).toBe('0.6.0');
+  expect(record.appVersion).toBe('0.7.0');
   expect(record.frames[0].delay).toBe(230);
   expect(record.editorState.exportFormat).toBe('apng');
   expect(record.editorState.exportFilename).toBe('recover-me');
