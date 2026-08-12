@@ -9,10 +9,14 @@ export function readInlineScripts() {
 
 export function readSourceScripts() {
   return [
-    'gif-decoder.js',
-    'gif-encoder.js',
-    'app.js'
-  ].map(filename => fs.readFileSync(new URL(`../src/${filename}`, import.meta.url), 'utf8').trimEnd());
+    ['gif-decoder.js'],
+    ['gif-encoder.js'],
+    ['history-controller.js', 'recovery-controller.js', 'export-controller.js', 'app.js']
+  ].map(filenames => filenames
+    .map(filename => fs.readFileSync(new URL('../src/' + filename, import.meta.url), 'utf8')
+      .replace(/^export\s+/gm, '')
+      .trimEnd())
+    .join('\n\n'));
 }
 
 export function loadGifDecoder() {

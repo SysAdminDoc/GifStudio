@@ -56,9 +56,6 @@
                 this.originalFilename = 'edited';
                 this.currentEncoder = null;
                 this._loadInProgress = false;
-                this._autosaveGeneration = 0;
-                this._autosaveTransaction = null;
-                this._lastSavedGeneration = 0;
                 this._storageErrorShown = false;
                 this.storageStatus = 'checking';
                 this.storageTelemetry = {
@@ -76,7 +73,6 @@
                 this._recoveryLeaseTimer = null;
                 this._runtimeDisposed = false;
                 this._recoveryConflictShown = false;
-                this._recoveryPngCache = new WeakMap();
                 this._canvasRefCounts = new WeakMap();
                 this._scriptLoads = new Map();
                 this.serviceWorkerStatus = 'not-available';
@@ -84,8 +80,6 @@
                 this.lastOutputValidation = null;
                 this._operationGeneration = 0;
                 this._activeOperation = null;
-                this._activeExportJob = null;
-                this._exportGeneration = 0;
                 this._projectGeneration = 0;
                 this.sourceTiming = null;
                 this.lastDecoderPath = 'none';
@@ -109,9 +103,7 @@
 
                 this.selectedFrames = new Set();
 
-                // Undo/redo state
-                this.undoStack = [];
-                this.redoStack = [];
+                // Undo/redo controller budget
                 this.maxUndoBytes = Math.floor(this.getMemoryLimits().defaultBytes / 4);
 
                 // Elements
@@ -122,6 +114,112 @@
                 this.timeline = document.getElementById('timeline');
                 this.framesContainer = document.getElementById('framesContainer');
                 this.fileInput = document.getElementById('fileInput');
+
+                this.historyController = new HistoryController({
+                    getFrames: () => this.frames,
+                    setFrames: frames => { this.frames = frames; },
+                    readState: () => ({
+                        currentFrame: this.currentFrame,
+                        originalWidth: this.originalWidth,
+                        originalHeight: this.originalHeight,
+                        cropRect: { ...this.cropRect }
+                    }),
+                    applyState: snapshot => {
+                        this.currentFrame = Math.min(snapshot.currentFrame, this.frames.length - 1);
+                        this.originalWidth = snapshot.originalWidth;
+                        this.originalHeight = snapshot.originalHeight;
+                        this.cropRect = { ...snapshot.cropRect };
+                    },
+                    retainCanvas: canvas => this.retainCanvas(canvas),
+                    releaseFrames: frames => this.releaseFrames(frames),
+                    prepareMutation: options => this.prepareMutation(options),
+                    getMaxBytes: () => this.maxUndoBytes,
+                    onRestored: () => {
+                        this.selectedFrames.clear();
+                        this.updateGIFInfo();
+                        this.updateResizeInputs();
+                        this.updateCropInputs();
+                        this.renderTimeline();
+                        this.renderFrame();
+                        this.fitToView();
+                    },
+                    updateButtons: () => this.updateUndoRedoButtons(),
+                    scheduleAutosave: () => this.scheduleAutosave(),
+                    showToast: (message, type) => this.showToast(message, type)
+                });
+                this.exportController = new ExportController({
+                    getFrames: () => this.frames,
+                    getDimensions: () => ({
+                        width: this.originalWidth,
+                        height: this.originalHeight
+                    }),
+                    getProjectGeneration: () => this._projectGeneration,
+                    getActiveOperation: () => this._activeOperation,
+                    showToast: (message, type) => this.showToast(message, type),
+                    stopPlayback: () => this.stopPlayback(),
+                    preflightMemory: (operation, options) => this.preflightMemory(operation, options),
+                    cloneFrame: frame => this.cloneFrame(frame),
+                    releaseFrames: frames => this.releaseFrames(frames),
+                    setControlsLocked: locked => this.setExportControlsLocked(locked),
+                    getCurrentEncoder: () => this.currentEncoder,
+                    onFinished: ({ profile }) => {
+                        this.lastExportProfile = profile;
+                        this.currentEncoder = null;
+                    }
+                });
+                this.recoveryController = new RecoveryController({
+                    schemaVersion: SESSION_SCHEMA_VERSION,
+                    appVersion: APP_VERSION,
+                    leaseMs: RECOVERY_LEASE_MS,
+                    getContext: () => ({
+                        key: this._recoveryKey,
+                        ownerId: this._recoveryOwnerId,
+                        ownerEpoch: this._recoveryOwnerEpoch
+                    }),
+                    getFrames: () => this.frames,
+                    getDimensions: () => ({
+                        width: this.originalWidth,
+                        height: this.originalHeight
+                    }),
+                    getFilename: () => this.originalFilename,
+                    getSourceTiming: () => this.sourceTiming,
+                    retainCanvas: canvas => this.retainCanvas(canvas),
+                    releaseFrames: frames => this.releaseFrames(frames),
+                    captureEditorState: () => this.captureEditorState(),
+                    preflightMemory: (operation, options, settings) =>
+                        this.preflightMemory(operation, options, settings),
+                    openDB: () => this.openDB(),
+                    validateBudget: (width, height, frameCount) =>
+                        GifDecoder.validateBudget(width, height, frameCount),
+                    decodeFrame: (png, width, height) => this.decodeRecoveryFrame(png, width, height),
+                    beginOperation: kind => this.beginOperation(kind),
+                    assertOperationCurrent: token => this.assertOperationCurrent(token),
+                    finishOperation: token => this.finishOperation(token),
+                    commitProject: (project, token) => this.commitProject(project, token),
+                    restoreEditorState: state => this.restoreEditorState(state),
+                    showToast: (message, type) => this.showToast(message, type),
+                    reportStorageError: (context, error) => this.reportStorageError(context, error),
+                    onSaved: session => {
+                        this.storageStatus = 'ready';
+                        this.recoveryCoordinationStatus = 'owned by this tab';
+                        this._storageErrorShown = false;
+                        this._autosaveMemoryWarningShown = false;
+                        this._recoveryChannel?.postMessage({
+                            type: 'saved',
+                            ownerId: session.ownerId,
+                            savedAt: session.savedAt
+                        });
+                    },
+                    onMemoryWarning: error => {
+                        if (!this._autosaveMemoryWarningShown) {
+                            this._autosaveMemoryWarningShown = true;
+                            this.showToast(error.message, 'warning');
+                        }
+                    },
+                    onStaleDelete: () => {
+                        this.recoveryCoordinationStatus = 'stale delete prevented';
+                    }
+                });
 
                 this.init();
             }
@@ -464,6 +562,34 @@
             // Session Autosave (IndexedDB)
             // ============================================
 
+            get _autosaveGeneration() {
+                return this.recoveryController?.generation || 0;
+            }
+
+            set _autosaveGeneration(value) {
+                if (this.recoveryController) this.recoveryController.generation = value;
+            }
+
+            get _autosaveTransaction() {
+                return this.recoveryController?.transaction || null;
+            }
+
+            set _autosaveTransaction(value) {
+                if (this.recoveryController) this.recoveryController.transaction = value;
+            }
+
+            get _autosaveTimer() {
+                return this.recoveryController?.timer || null;
+            }
+
+            set _autosaveTimer(value) {
+                if (this.recoveryController) this.recoveryController.timer = value;
+            }
+
+            get _lastSavedGeneration() {
+                return this.recoveryController?.lastSavedGeneration || 0;
+            }
+
             createRecoveryId(prefix) {
                 const random = globalThis.crypto?.randomUUID?.() ||
                     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -522,11 +648,7 @@
                 this._recoveryLeaseTimer = null;
                 this._recoveryChannel?.close();
                 this._recoveryChannel = null;
-                if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
-                this._autosaveTimer = null;
-                this._autosaveGeneration++;
-                try { this._autosaveTransaction?.abort(); } catch {}
-                this._autosaveTransaction = null;
+                this.recoveryController.dispose();
                 if (this.playInterval) clearTimeout(this.playInterval);
                 this.playInterval = null;
                 this.isPlaying = false;
@@ -601,6 +723,27 @@
                 }
             }
 
+            async decodeRecoveryFrame(png, width, height) {
+                const blob = new Blob([png], { type: 'image/png' });
+                const img = await new Promise((resolve, reject) => {
+                    const image = new Image();
+                    image.onload = () => {
+                        URL.revokeObjectURL(image.src);
+                        resolve(image);
+                    };
+                    image.onerror = () => {
+                        URL.revokeObjectURL(image.src);
+                        reject(new Error('Failed to load recovery frame'));
+                    };
+                    image.src = URL.createObjectURL(blob);
+                });
+                const canvas = document.createElement('canvas');
+                canvas.width = width || img.width;
+                canvas.height = height || img.height;
+                canvas.getContext('2d').drawImage(img, 0, 0);
+                return canvas;
+            }
+
             openDB() {
                 return new Promise((resolve, reject) => {
                     const req = indexedDB.open('GifStudioSession', SESSION_SCHEMA_VERSION);
@@ -670,60 +813,7 @@
             }
 
             migrateSession(record) {
-                const invalid = (message, name = 'DataError') => {
-                    const error = new Error(message);
-                    error.name = name;
-                    throw error;
-                };
-                if (!record || typeof record !== 'object') {
-                    invalid('Recovery record is not an object');
-                }
-                const version = record.schemaVersion || 1;
-                if (version > SESSION_SCHEMA_VERSION) {
-                    invalid(`Recovery schema ${version} requires a newer GifStudio`, 'VersionError');
-                }
-                if (!Array.isArray(record.frames) || record.frames.length === 0) {
-                    invalid('Recovery record has no frames');
-                }
-                try {
-                    GifDecoder.validateBudget(record.width, record.height, record.frames.length);
-                } catch (error) {
-                    invalid(error.message);
-                }
-                record.frames.forEach((frame, index) => {
-                    const validPng = frame?.png instanceof ArrayBuffer || ArrayBuffer.isView(frame?.png);
-                    if (!validPng) invalid(`Recovery frame ${index + 1} has no PNG data`);
-                    if (!Number.isFinite(frame.delay) || frame.delay < 1) {
-                        invalid(`Recovery frame ${index + 1} has an invalid delay`);
-                    }
-                });
-
-                if (version === 1) {
-                    return {
-                        ...record,
-                        schemaVersion: SESSION_SCHEMA_VERSION,
-                        appVersion: APP_VERSION,
-                        sourceTiming: {
-                            format: 'Migrated recovery',
-                            delays: record.frames.map(frame => frame.delay)
-                        },
-                        editorState: {
-                            currentFrame: record.currentFrame || 0,
-                            exportFilename: `${record.filename || 'recovered'}-edited`,
-                            exportFormat: 'gif',
-                            playbackSpeed: 1,
-                            playbackMode: 'normal'
-                        }
-                    };
-                }
-                if (record.sourceTiming && (
-                    typeof record.sourceTiming.format !== 'string' ||
-                    !Array.isArray(record.sourceTiming.delays) ||
-                    record.sourceTiming.delays.some(delay => !Number.isFinite(delay) || delay < 1)
-                )) {
-                    invalid('Recovery source timing is invalid');
-                }
-                return record;
+                return this.recoveryController.migrate(record);
             }
 
             reportStorageError(context, error) {
@@ -810,125 +900,11 @@
             }
 
             scheduleAutosave() {
-                this._autosaveGeneration++;
-                const generation = this._autosaveGeneration;
-                if (this._autosaveTransaction) {
-                    try { this._autosaveTransaction.abort(); } catch {}
-                }
-                if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
-                this._autosaveTimer = setTimeout(() => this.saveSession(generation), 2000);
+                return this.recoveryController.schedule();
             }
 
             async saveSession(generation = this._autosaveGeneration) {
-                if (this.frames.length === 0 || generation !== this._autosaveGeneration) return;
-                const recoveryOwnerId = this._recoveryOwnerId;
-                const recoveryKey = this._recoveryKey;
-                const recoveryOwnerEpoch = this._recoveryOwnerEpoch;
-                try {
-                    this.preflightMemory('Recovery autosave', {
-                        width: this.originalWidth,
-                        height: this.originalHeight,
-                        frameCount: this.frames.length,
-                        temporaryCopies: 1
-                    }, { allowOverride: false });
-                    this._autosaveMemoryWarningShown = false;
-                } catch (error) {
-                    if (!this._autosaveMemoryWarningShown) {
-                        this._autosaveMemoryWarningShown = true;
-                        this.showToast(error.message, 'warning');
-                    }
-                    return;
-                }
-                const snapshot = {
-                    frames: this.frames.map(f => ({
-                        canvas: this.retainCanvas(f.canvas),
-                        delay: f.delay,
-                        disposalType: f.disposalType
-                    })),
-                    width: this.originalWidth,
-                    height: this.originalHeight,
-                    filename: this.originalFilename,
-                    sourceTiming: this.sourceTiming
-                        ? { format: this.sourceTiming.format, delays: [...this.sourceTiming.delays] }
-                        : null,
-                    editorState: this.captureEditorState()
-                };
-                let db;
-                let tx;
-                try {
-                    db = await this.openDB();
-                    if (
-                        generation !== this._autosaveGeneration ||
-                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
-                    ) return;
-                    const frameData = [];
-                    for (const frame of snapshot.frames) {
-                        let buf = this._recoveryPngCache.get(frame.canvas);
-                        if (!buf) {
-                            const blob = await new Promise(r => frame.canvas.toBlob(r, 'image/png'));
-                            if (!blob) throw new Error('Browser could not serialize a recovery frame');
-                            if (
-                                generation !== this._autosaveGeneration ||
-                                recoveryOwnerEpoch !== this._recoveryOwnerEpoch
-                            ) return;
-                            buf = await blob.arrayBuffer();
-                            this._recoveryPngCache.set(frame.canvas, buf);
-                        }
-                        frameData.push({ png: buf, delay: frame.delay, disposalType: frame.disposalType });
-                    }
-                    if (
-                        generation !== this._autosaveGeneration ||
-                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
-                    ) return;
-                    const session = {
-                        schemaVersion: SESSION_SCHEMA_VERSION,
-                        appVersion: APP_VERSION,
-                        generation,
-                        ownerId: recoveryOwnerId,
-                        leaseExpiresAt: Date.now() + RECOVERY_LEASE_MS,
-                        frames: frameData,
-                        width: snapshot.width,
-                        height: snapshot.height,
-                        filename: snapshot.filename,
-                        sourceTiming: snapshot.sourceTiming,
-                        editorState: snapshot.editorState,
-                        savedAt: Date.now()
-                    };
-                    tx = db.transaction('session', 'readwrite');
-                    this._autosaveTransaction = tx;
-                    if (
-                        generation !== this._autosaveGeneration ||
-                        recoveryOwnerEpoch !== this._recoveryOwnerEpoch
-                    ) {
-                        tx.abort();
-                        return;
-                    }
-                    tx.objectStore('session').put(session, recoveryKey);
-                    await new Promise((resolve, reject) => {
-                        tx.oncomplete = resolve;
-                        tx.onerror = () => reject(tx.error);
-                        tx.onabort = () => reject(tx.error || new DOMException('Autosave superseded', 'AbortError'));
-                    });
-                    if (generation === this._autosaveGeneration) {
-                        this._lastSavedGeneration = generation;
-                        this.storageStatus = 'ready';
-                        this.recoveryCoordinationStatus = 'owned by this tab';
-                        this._storageErrorShown = false;
-                        this._recoveryChannel?.postMessage({
-                            type: 'saved',
-                            ownerId: recoveryOwnerId,
-                            savedAt: session.savedAt
-                        });
-                    }
-                } catch (e) {
-                    if (generation === this._autosaveGeneration && e?.name !== 'AbortError') {
-                        this.reportStorageError('Autosave failed', e);
-                    }
-                } finally {
-                    if (this._autosaveTransaction === tx) this._autosaveTransaction = null;
-                    if (db) db.close();
-                    this.releaseFrames(snapshot.frames);
-                }
+                return this.recoveryController.save(generation);
             }
 
             async checkSessionRecovery() {
@@ -1066,68 +1042,7 @@
             }
 
             async restoreSession(session, recoveryKey = this._recoveryKey) {
-                const token = this.beginOperation('Session restore');
-                if (!token) return;
-                const restoredFrames = [];
-                let committed = false;
-                try {
-                    GifDecoder.validateBudget(session.width, session.height, session.frames?.length || 0);
-                    this.preflightMemory('Session restore', {
-                        width: session.width,
-                        height: session.height,
-                        frameCount: session.frames.length,
-                        temporaryCopies: 1
-                    });
-                    for (const fd of session.frames) {
-                        this.assertOperationCurrent(token);
-                        const blob = new Blob([fd.png], { type: 'image/png' });
-                        const img = await new Promise((resolve, reject) => {
-                            const i = new Image();
-                            i.onload = () => { URL.revokeObjectURL(i.src); resolve(i); };
-                            i.onerror = () => { URL.revokeObjectURL(i.src); reject(new Error('Failed to load recovery frame')); };
-                            i.src = URL.createObjectURL(blob);
-                        });
-                        this.assertOperationCurrent(token);
-                        const c = document.createElement('canvas');
-                        c.width = session.width;
-                        c.height = session.height;
-                        c.getContext('2d').drawImage(img, 0, 0);
-                        restoredFrames.push({ canvas: c, delay: fd.delay, disposalType: fd.disposalType || 0 });
-                    }
-
-                    this.commitProject({
-                        frames: restoredFrames,
-                        width: session.width,
-                        height: session.height,
-                        currentFrame: session.editorState?.currentFrame,
-                        filename: session.filename || 'recovered',
-                        rawGifMeta: null,
-                        sourceTiming: session.sourceTiming,
-                        sourceFormat: 'Recovered session',
-                        exportFilename: `${session.filename || 'recovered'}-edited`
-                    }, token);
-                    committed = true;
-                    this.restoreEditorState(session.editorState);
-                    this.showToast(`Restored ${restoredFrames.length} frames`, 'success');
-                    return true;
-                } catch (error) {
-                    if (!committed) this.releaseFrames(restoredFrames);
-                    if (error.name !== 'AbortError') {
-                        console.error('Session restore failed:', error);
-                        this.showToast('Recovery failed: ' + error.message, 'error');
-                        if (error.name !== 'MemoryBudgetError') {
-                            await this.clearSavedSession({
-                                key: recoveryKey,
-                                expectedOwnerId: session.ownerId || null,
-                                expectedSavedAt: session.savedAt,
-                                reportErrors: false
-                            });
-                        }
-                    }
-                    return false;
-                } finally {
-                    this.finishOperation(token);
-                }
+                return this.recoveryController.restore(session, recoveryKey);
             }
 
             async clearSavedSession({
@@ -1136,142 +1051,56 @@
                 expectedSavedAt,
                 reportErrors = true
             } = {}) {
-                let db;
-                try {
-                    db = await this.openDB();
-                    const tx = db.transaction('session', 'readwrite');
-                    const store = tx.objectStore('session');
-                    const request = store.get(key);
-                    let deleted = false;
-                    request.onsuccess = () => {
-                        const record = request.result;
-                        if (!record) return;
-                        const ownerChanged = expectedOwnerId !== undefined &&
-                            (record.ownerId || null) !== expectedOwnerId;
-                        const recordChanged = expectedSavedAt !== undefined &&
-                            record.savedAt !== expectedSavedAt;
-                        const activeOtherOwner =
-                            key !== this._recoveryKey &&
-                            record.ownerId &&
-                            record.ownerId !== this._recoveryOwnerId &&
-                            record.leaseExpiresAt > Date.now();
-                        if (ownerChanged || recordChanged || activeOtherOwner) {
-                            this.recoveryCoordinationStatus = 'stale delete prevented';
-                            return;
-                        }
-                        store.delete(key);
-                        deleted = true;
-                    };
-                    await new Promise((resolve, reject) => {
-                        tx.oncomplete = resolve;
-                        tx.onerror = () => reject(tx.error);
-                        tx.onabort = () => reject(tx.error || new Error('Recovery delete aborted'));
-                    });
-                    if (!deleted && request.result) {
-                        this.showToast('Recovery changed in another tab and was kept.', 'warning');
-                    }
-                    return deleted;
-                } catch (e) {
-                    if (reportErrors) this.reportStorageError('Could not clear recovery', e);
-                    return false;
-                } finally {
-                    if (db) db.close();
-                }
+                return this.recoveryController.clear({
+                    key,
+                    expectedOwnerId,
+                    expectedSavedAt,
+                    reportErrors
+                });
             }
 
             // ============================================
             // Undo / Redo
             // ============================================
 
+            get undoStack() {
+                return this.historyController?.undoStack || [];
+            }
+
+            get redoStack() {
+                return this.historyController?.redoStack || [];
+            }
+
             captureHistorySnapshot(label) {
-                return {
-                    label,
-                    frames: this.frames.map(frame => ({
-                        canvas: this.retainCanvas(frame.canvas),
-                        delay: frame.delay,
-                        disposalType: frame.disposalType
-                    })),
-                    currentFrame: this.currentFrame,
-                    originalWidth: this.originalWidth,
-                    originalHeight: this.originalHeight,
-                    cropRect: { ...this.cropRect }
-                };
+                return this.historyController.captureSnapshot(label);
             }
 
             releaseHistorySnapshot(snapshot) {
-                this.releaseFrames(snapshot?.frames);
+                this.historyController.releaseSnapshot(snapshot);
             }
 
             estimateHistoryBytes() {
-                const canvases = new Set();
-                [...this.undoStack, ...this.redoStack].forEach(snapshot => {
-                    snapshot.frames.forEach(frame => canvases.add(frame.canvas));
-                });
-                return [...canvases].reduce(
-                    (sum, canvas) => sum + canvas.width * canvas.height * 4,
-                    0
-                );
+                return this.historyController.estimateBytes();
             }
 
             trimHistoryToBudget() {
-                while (this.estimateHistoryBytes() > this.maxUndoBytes) {
-                    const snapshot = this.undoStack.length > 1
-                        ? this.undoStack.shift()
-                        : this.redoStack.shift() || this.undoStack.shift();
-                    if (!snapshot) break;
-                    this.releaseHistorySnapshot(snapshot);
-                }
+                this.historyController.trimToBudget();
             }
 
             saveUndoState(label) {
-                this.undoStack.push(this.captureHistorySnapshot(label));
-                this.redoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
-                this.redoStack = [];
-                this.trimHistoryToBudget();
-                this.updateUndoRedoButtons();
-                this.scheduleAutosave();
+                this.historyController.save(label);
             }
 
             restoreSnapshot(snapshot) {
-                this.releaseFrames(this.frames);
-                // The popped snapshot transfers its retained canvas ownership to
-                // the active project; metadata objects remain independently mutable.
-                this.frames = snapshot.frames.map(frame => ({ ...frame }));
-                this.currentFrame = Math.min(snapshot.currentFrame, this.frames.length - 1);
-                this.originalWidth = snapshot.originalWidth;
-                this.originalHeight = snapshot.originalHeight;
-                this.cropRect = { ...snapshot.cropRect };
-                this.selectedFrames.clear();
-                this.updateGIFInfo();
-                this.updateResizeInputs();
-                this.updateCropInputs();
-                this.renderTimeline();
-                this.renderFrame();
-                this.fitToView();
+                this.historyController.restore(snapshot);
             }
 
             undo() {
-                if (this.undoStack.length === 0) return;
-                if (!this.prepareMutation({ operation: 'Undo', temporaryCopies: 0 })) return;
-                this.redoStack.push(this.captureHistorySnapshot('redo'));
-                const snapshot = this.undoStack.pop();
-                this.restoreSnapshot(snapshot);
-                this.trimHistoryToBudget();
-                this.updateUndoRedoButtons();
-                this.scheduleAutosave();
-                this.showToast(`Undo: ${snapshot.label}`, 'info');
+                return this.historyController.undo();
             }
 
             redo() {
-                if (this.redoStack.length === 0) return;
-                if (!this.prepareMutation({ operation: 'Redo', temporaryCopies: 0 })) return;
-                this.undoStack.push(this.captureHistorySnapshot('undo'));
-                const snapshot = this.redoStack.pop();
-                this.restoreSnapshot(snapshot);
-                this.trimHistoryToBudget();
-                this.updateUndoRedoButtons();
-                this.scheduleAutosave();
-                this.showToast('Redo', 'info');
+                return this.historyController.redo();
             }
 
             updateUndoRedoButtons() {
@@ -1288,11 +1117,7 @@
             }
 
             clearUndoHistory() {
-                this.undoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
-                this.redoStack.forEach(snapshot => this.releaseHistorySnapshot(snapshot));
-                this.undoStack = [];
-                this.redoStack = [];
-                this.updateUndoRedoButtons();
+                this.historyController.clear();
             }
 
             bindEvents() {
@@ -3039,121 +2864,46 @@
                 }
             }
 
+            get _activeExportJob() {
+                return this.exportController?.activeJob || null;
+            }
+
+            get _exportGeneration() {
+                return this.exportController?.generation || 0;
+            }
+
             beginExportJob(
                 kind,
                 temporaryCopies = kind === 'GIF optimization' ? 4 : 3,
                 returnFocus = document.activeElement
             ) {
-                if (this.frames.length === 0) return null;
-                if (this._activeOperation) {
-                    this.showToast(`Wait for ${this._activeOperation.kind} to finish`, 'warning');
-                    return null;
-                }
-                if (this._activeExportJob) {
-                    this.showToast('Another export is already running', 'warning');
-                    return null;
-                }
-
-                this.stopPlayback();
-                const memoryEstimate = this.preflightMemory(kind, {
-                    width: this.originalWidth,
-                    height: this.originalHeight,
-                    frameCount: this.frames.length,
-                    temporaryCopies
-                });
-                const snapshotFrames = [];
-                try {
-                    this.frames.forEach(frame => snapshotFrames.push(this.cloneFrame(frame)));
-                } catch (error) {
-                    this.releaseFrames(snapshotFrames);
-                    throw error;
-                }
-
-                let resolveCancel;
-                const cancelSignal = new Promise(resolve => {
-                    resolveCancel = resolve;
-                });
-                const job = {
-                    id: ++this._exportGeneration,
-                    kind,
-                    frames: snapshotFrames,
-                    width: this.originalWidth,
-                    height: this.originalHeight,
-                    projectGeneration: this._projectGeneration,
-                    startedAt: performance.now(),
-                    progress: 0,
-                    maxFrameBlockMs: 0,
-                    memoryEstimate,
-                    cancelled: false,
-                    cancelReason: '',
-                    encoder: null,
-                    returnFocus,
-                    cancelSignal,
-                    resolveCancel
-                };
-                this._activeExportJob = job;
-                this.setExportControlsLocked(true);
-                return job;
+                return this.exportController.begin(kind, temporaryCopies, returnFocus);
             }
 
             isExportJobCurrent(job) {
-                return !!job &&
-                    !job.cancelled &&
-                    this._activeExportJob === job &&
-                    job.id === this._exportGeneration;
+                return this.exportController.isCurrent(job);
             }
 
             assertExportJobCurrent(job) {
-                if (!this.isExportJobCurrent(job)) {
-                    const error = new Error(job?.cancelReason || 'Aborted');
-                    error.name = 'AbortError';
-                    throw error;
-                }
+                this.exportController.assertCurrent(job);
             }
 
             updateExportProgress(job, percent, message, progress, status) {
-                this.assertExportJobCurrent(job);
-                job.progress = Math.max(job.progress, Math.min(100, percent));
-                if (progress) progress.style.width = `${job.progress}%`;
-                if (status && message) status.textContent = message;
+                this.exportController.updateProgress(job, percent, message, progress, status);
             }
 
             async waitForExportTask(job, task) {
-                const outcome = await Promise.race([
-                    Promise.resolve(task).then(value => ({ value })),
-                    job.cancelSignal.then(() => ({ cancelled: true }))
-                ]);
-                if (outcome.cancelled) this.assertExportJobCurrent(job);
-                return outcome.value;
+                return this.exportController.waitForTask(job, task);
             }
 
             cancelExportJob(reason = 'Export cancelled') {
-                const job = this._activeExportJob;
-                if (!job || job.cancelled) return;
-                job.cancelled = true;
-                job.cancelReason = reason;
-                job.resolveCancel();
-                if (job.encoder) job.encoder.abort();
-                if (this.currentEncoder) this.currentEncoder.abort();
+                this.exportController.cancel(reason);
                 const status = document.getElementById('exportStatus');
                 if (status) status.textContent = 'Cancelling...';
             }
 
             finishExportJob(job) {
-                if (!job) return;
-                this.releaseFrames(job.frames);
-                job.frames = [];
-                if (this._activeExportJob === job) {
-                    this.lastExportProfile = {
-                        kind: job.kind,
-                        durationMs: Math.round(performance.now() - job.startedAt),
-                        maxFrameBlockMs: Math.round(job.maxFrameBlockMs),
-                        cancelled: job.cancelled
-                    };
-                    this._activeExportJob = null;
-                    this.currentEncoder = null;
-                    this.setExportControlsLocked(false);
-                }
+                this.exportController.finish(job);
             }
 
             async validateGIFOutput(blob, job) {

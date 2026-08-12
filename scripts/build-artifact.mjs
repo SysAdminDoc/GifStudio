@@ -5,9 +5,17 @@ const root = new URL('../', import.meta.url);
 const templateUrl = new URL('src/index.template.html', root);
 const artifactUrl = new URL('index.html', root);
 const boundaries = [
-  { token: '{{GIF_DECODER_SOURCE}}', path: 'src/gif-decoder.js' },
-  { token: '{{GIF_ENCODER_SOURCE}}', path: 'src/gif-encoder.js' },
-  { token: '{{APP_SOURCE}}', path: 'src/app.js' }
+  { token: '{{GIF_DECODER_SOURCE}}', paths: ['src/gif-decoder.js'] },
+  { token: '{{GIF_ENCODER_SOURCE}}', paths: ['src/gif-encoder.js'] },
+  {
+    token: '{{APP_SOURCE}}',
+    paths: [
+      'src/history-controller.js',
+      'src/recovery-controller.js',
+      'src/export-controller.js',
+      'src/app.js'
+    ]
+  }
 ];
 
 function normalizeNewlines(value) {
@@ -19,9 +27,11 @@ export function renderArtifact() {
   for (const boundary of boundaries) {
     const matches = output.split(boundary.token).length - 1;
     assert.equal(matches, 1, `template must contain one ${boundary.token} marker`);
-    const source = normalizeNewlines(
-      fs.readFileSync(new URL(boundary.path, root), 'utf8')
-    ).replace(/\n+$/g, '');
+    const source = normalizeNewlines(boundary.paths
+      .map(path => fs.readFileSync(new URL(path, root), 'utf8')
+        .replace(/^export\s+/gm, '')
+        .replace(/\n+$/g, ''))
+      .join('\n\n'));
     output = output.replace(boundary.token, source);
   }
   assert.doesNotMatch(output, /\{\{[A-Z_]+_SOURCE\}\}/, 'unresolved source marker');
