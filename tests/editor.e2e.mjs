@@ -687,6 +687,17 @@ test('service worker caches the app shell for offline reload and exposes update 
   if (!await page.evaluate(() => Boolean(navigator.serviceWorker.controller))) {
     await page.reload();
   }
+  const manifest = await page.evaluate(async () => (await fetch('./manifest.json')).json());
+  expect(manifest.id).toBe('./index.html');
+  expect(manifest.display).toBe('standalone');
+  expect(manifest.background_color).toBe('#101311');
+  expect(manifest.theme_color).toBe('#101311');
+  expect(manifest.icons).toEqual(expect.arrayContaining([
+    expect.objectContaining({ src: 'icons/icon-192.png', sizes: '192x192', purpose: 'any' }),
+    expect.objectContaining({ src: 'icons/icon-512.png', sizes: '512x512', purpose: 'any' }),
+    expect.objectContaining({ src: 'icons/icon-192-maskable.png', sizes: '192x192', purpose: 'maskable' }),
+    expect.objectContaining({ src: 'icons/icon-512-maskable.png', sizes: '512x512', purpose: 'maskable' })
+  ]));
   const cachedPaths = await page.evaluate(async () => {
     const cache = await caches.open('gifstudio-v0.6.0');
     return (await cache.keys()).map(request => new URL(request.url).pathname);
@@ -695,6 +706,10 @@ test('service worker caches the app shell for offline reload and exposes update 
     '/index.html',
     '/manifest.json',
     '/icon.png',
+    '/icons/icon-192.png',
+    '/icons/icon-192-maskable.png',
+    '/icons/icon-512.png',
+    '/icons/icon-512-maskable.png',
     '/vendor/pako-2.1.0.min.js',
     '/vendor/upng-2.1.0.js',
     '/vendor/gifsicle-wasm-browser-1.5.19.min.js'
